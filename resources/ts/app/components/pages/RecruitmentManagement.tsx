@@ -905,6 +905,37 @@ export default function RecruitmentManagement() {
       const suffix = app.suffix ?? '';
       const fullName = [firstName, middleName, lastName, suffix].filter(Boolean).join(' ') || app.name;
       const loginName = `${firstName}${lastName}`.replace(/\s+/g, '').toLowerCase() || app.id.toLowerCase();
+      const sendHiredCredentialsEmail = async (payload: {
+        applicantId: string;
+        employeeId: string;
+        recipientEmail: string;
+        name: string;
+        position: string;
+        loginEmail: string;
+        temporaryPassword: string;
+      }) => {
+        const response = await fetch('/api/applications/send-hired-credentials-email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            applicant_id: payload.applicantId,
+            employee_id: payload.employeeId,
+            recipient_email: payload.recipientEmail,
+            name: payload.name,
+            position: payload.position,
+            login_email: payload.loginEmail,
+            temporary_password: payload.temporaryPassword,
+          }),
+        });
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.message || 'Unable to send hired credentials email.');
+        }
+      };
 
       const { data: existingEmployee, error: existingEmployeeError } = await supabase
         .from('employees')
@@ -978,11 +1009,22 @@ export default function RecruitmentManagement() {
         outlet: '',
         is_active: true,
       };
+      let loginEmail = accountPayload.email;
+      let temporaryPassword = '';
 
       if (existingAccount?.user_id) {
+        const { data: existingAccountWithPassword, error: existingAccountPasswordError } = await supabase
+          .from('user_accounts')
+          .select('password')
+          .eq('employee_id', employeeId)
+          .maybeSingle();
+
+        if (existingAccountPasswordError) throw existingAccountPasswordError;
+        temporaryPassword = existingAccountWithPassword?.password || generateTemporaryPassword(loginName);
+
         const { error: accountUpdateError } = await supabase
           .from('user_accounts')
-          .update(accountPayload)
+          .update({ ...accountPayload, password: temporaryPassword })
           .eq('employee_id', employeeId);
 
         if (accountUpdateError) throw accountUpdateError;
@@ -995,6 +1037,7 @@ export default function RecruitmentManagement() {
 
         const userId = `USR-2026-${String((userCount ?? 0) + 1).padStart(4, '0')}`;
         const password = generateTemporaryPassword(loginName);
+        temporaryPassword = password;
 
         const { error: accountInsertError } = await supabase.from('user_accounts').insert({
           user_id: userId,
@@ -1008,6 +1051,25 @@ export default function RecruitmentManagement() {
           open: true,
           message: `✅ Applicant hired and employee account created. Temporary password: ${password}`,
           severity: 'success',
+        });
+      }
+
+      try {
+        await sendHiredCredentialsEmail({
+          applicantId: app.id,
+          employeeId,
+          recipientEmail: app.email ?? '',
+          name: fullName,
+          position: app.position ?? '',
+          loginEmail,
+          temporaryPassword,
+        });
+      } catch (emailError: any) {
+        console.warn('Hired credentials email failed:', emailError);
+        setSnackbar({
+          open: true,
+          message: `Applicant hired, but the credentials email could not be sent. Login: ${loginEmail} | Temporary password: ${temporaryPassword}`,
+          severity: 'error',
         });
       }
 
@@ -2263,8 +2325,8 @@ export default function RecruitmentManagement() {
                   {renderProfileField('Civil Status', selectedApp.civilStatus, { xs: 12, sm: 6 }, 'civilStatus')}
                   {renderProfileField('Nationality', raw.nationality ?? extra.nationality)}
                   {renderProfileField('Birthplace', selectedApp.birthplace, { xs: 12, sm: 6 }, 'birthplace')}
-                  {renderProfileField('Height', selectedApp.height, { xs: 12, sm: 6 }, 'height')}
-                  {renderProfileField('Weight', selectedApp.weight, { xs: 12, sm: 6 }, 'weight')}
+                  {renderProfileField('Height (cm)', selectedApp.height, { xs: 12, sm: 6 }, 'height')}
+                  {renderProfileField('Weight (kg)', selectedApp.weight, { xs: 12, sm: 6 }, 'weight')}
                   {renderProfileField('Contact Number', selectedApp.phone, { xs: 12, sm: 6 }, 'phone')}
                   {renderProfileField('Email Address', selectedApp.email, { xs: 12, sm: 6 }, 'email')}
                   {renderProfileField('Current Address', currentAddress, { xs: 12 }, 'address', { multiline: true, rows: 2 })}
@@ -2623,7 +2685,7 @@ export default function RecruitmentManagement() {
           </Box>
         </DialogTitle>
         <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: '#fbfff9' }}>
-          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+          <Grid container spacing={2} sx={{ mt: 1.5 }}>
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
@@ -2633,7 +2695,7 @@ export default function RecruitmentManagement() {
                 onChange={event => setIForm({ ...iForm, interviewDate: event.target.value })}
                 InputLabelProps={{ shrink: true }}
                 required
-                              sx={softTextFieldSx}
+                sx={softTextFieldSx}
 />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>

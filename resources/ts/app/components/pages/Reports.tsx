@@ -61,7 +61,7 @@ const REPORT_TYPES: ReportType[] = [
 ];
 
 const COLUMNS: Record<string, string[]> = {
-  employees: ['id', 'name', 'position', 'outlet', 'employmentType', 'salary', 'status', 'contact', 'date'],
+  employees: ['id', 'name', 'position', 'department', 'outlet', 'status', 'contact', 'email', 'dateHired'],
   applications: ['id', 'name', 'position', 'email', 'phone', 'dateApplied', 'status', 'hiringDecision'],
   schedules: ['id', 'employee', 'week', 'position', 'outlet', 'timeIn', 'timeOut', 'finalized', 'status'],
   attendance: [
@@ -214,6 +214,41 @@ const buildPeriod = (start: any, end: any, label?: string | null) => {
   return s === e ? s : `${s} to ${e}`;
 };
 
+const firstFilled = (...values: any[]) => {
+  for (const value of values) {
+    if (value !== null && value !== undefined && String(value).trim() !== '') return value;
+  }
+  return '';
+};
+
+const getComparableReportDate = (value: any) => {
+  if (!value) return '';
+  const str = String(value).trim();
+  const dateMatch = str.match(/\d{4}-\d{2}-\d{2}/);
+  if (dateMatch) return dateMatch[0];
+  const monthMatch = str.match(/^(\d{4}-\d{2})$/);
+  if (monthMatch) return `${monthMatch[1]}-01`;
+  const weekMatch = str.match(/^(\d{4})-W(\d{1,2})$/i);
+  if (weekMatch) {
+    const year = Number(weekMatch[1]);
+    const week = Number(weekMatch[2]);
+    const firstThursday = new Date(Date.UTC(year, 0, 4));
+    firstThursday.setUTCDate(firstThursday.getUTCDate() + (week - 1) * 7);
+    const monday = new Date(firstThursday);
+    monday.setUTCDate(firstThursday.getUTCDate() - ((firstThursday.getUTCDay() + 6) % 7));
+    return monday.toISOString().slice(0, 10);
+  }
+  const parsed = new Date(str);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+};
+
+const isWithinReportRange = (row: any, dateFrom: string, dateTo: string) => {
+  const dateVal = row.date || row.dateApplied || row.createdAt || row.periodStart || row.submittedDate || row.week || row.period;
+  const comparableDate = getComparableReportDate(dateVal);
+  if (!comparableDate) return true;
+  return comparableDate >= dateFrom && comparableDate <= dateTo;
+};
+
 const labelize = (key: string) =>
   key
     .replace(/([A-Z])/g, ' $1')
@@ -303,6 +338,7 @@ export default function Reports() {
         dssResults,
         dssItems,
         systemLogs,
+        userAccounts,
       ] = await Promise.all([
         safe('employees', 'created_at'),
         safe('applicants', 'created_at'),
@@ -317,10 +353,16 @@ export default function Reports() {
         safe('dss_results', 'created_at'),
         safe('dss_result_items', 'rank_no'),
         safe('system_logs', 'created_at'),
+        safe('user_accounts'),
       ]);
 
+      const outletByEmployeeId = new Map<string, any>();
+      userAccounts.forEach((u: any) => {
+        if (u.employee_id) outletByEmployeeId.set(u.employee_id, u.outlet);
+      });
+
       const employeeById = new Map<string, any>();
-      employees.forEach((e: any) => employeeById.set(e.employee_id, e));
+      employees.forEach((e: any) => employeeById.set(e.employee_id, { ...e, outlet: firstFilled(outletByEmployeeId.get(e.employee_id), e.outlet) }));
 
       const payrollById = new Map<string, any>();
       payrollSummaries.forEach((p: any) => payrollById.set(p.payroll_id, p));
@@ -333,11 +375,12 @@ export default function Reports() {
           id: e.employee_id,
           name: getFullName(e) || e.employee_name || '—',
           position: e.position || '—',
-          outlet: e.outlet || '—',
-          employmentType: e.employment_type || '—',
-          salary: e.salary ?? 0,
+          department: e.department || '—',
+          outlet: firstFilled(outletByEmployeeId.get(e.employee_id), e.outlet) || '—',
           status: e.status || '—',
-          contact: [e.email, e.phone_number].filter(Boolean).join(' / ') || '—',
+          contact: e.phone_number || '—',
+          email: e.email || '—',
+          dateHired: toDateOnly(e.hire_date) || '—',
           date: toDateOnly(e.hire_date || e.created_at),
         })),
 
@@ -362,7 +405,7 @@ export default function Reports() {
               : '—',
             week: s.week || '—',
             position: s.position || emp?.position || '—',
-            outlet: s.outlet || emp?.outlet || '—',
+            outlet: firstFilled(emp?.outlet, s.outlet) || '—',
             timeIn: formatTime(s.time_in),
             timeOut: formatTime(s.time_out),
             finalized: s.is_finalized ? 'Finalized' : 'Draft',
@@ -373,9 +416,9 @@ export default function Reports() {
 
         attendance: attendanceSummaries.map((a: any) => ({
           id: a.summary_id,
-          employee: `${a.employee_id}${a.employee_name ? ` - ${a.employee_name}` : ''}`,
-          position: a.position || '—',
-          outlet: a.outlet || '—',
+          employee: `${a.employee_id}${a.employee_name || employeeById.get(a.employee_id) ? ` - ${a.employee_name || getFullName(employeeById.get(a.employee_id))}` : ''}`,
+          position: a.position || employeeById.get(a.employee_id)?.position || '—',
+          outlet: firstFilled(employeeById.get(a.employee_id)?.outlet, a.outlet) || '—',
           period: buildPeriod(a.period_start, a.period_end),
           presentDays: a.total_present_days ?? 0,
           absentDays: a.total_absent_days ?? 0,
@@ -404,11 +447,12 @@ export default function Reports() {
 
         payroll: payrollItems.map((item: any) => {
           const payroll = payrollById.get(item.payroll_id);
+          const emp = item.employee_id ? employeeById.get(item.employee_id) : null;
           return {
             id: item.payroll_item_id,
-            employee: `${item.employee_id}${item.employee_name ? ` - ${item.employee_name}` : ''}`,
-            position: item.position || '—',
-            outlet: item.outlet || '—',
+            employee: `${item.employee_id}${item.employee_name || emp ? ` - ${item.employee_name || getFullName(emp)}` : ''}`,
+            position: item.position || emp?.position || '—',
+            outlet: firstFilled(emp?.outlet, item.outlet) || '—',
             period: buildPeriod(payroll?.period_start, payroll?.period_end, payroll?.cutoff_label),
             regularHours: item.regular_hours ?? 0,
             overtimeHours: item.overtime_hours ?? 0,
@@ -422,9 +466,9 @@ export default function Reports() {
 
         evaluations: evaluations.map((e: any) => ({
           id: e.evaluation_id,
-          employee: `${e.employee_id}${e.employee_name ? ` - ${e.employee_name}` : ''}`,
-          position: e.position || '—',
-          outlet: e.outlet || '—',
+          employee: `${e.employee_id}${e.employee_name || employeeById.get(e.employee_id) ? ` - ${e.employee_name || getFullName(employeeById.get(e.employee_id))}` : ''}`,
+          position: e.position || employeeById.get(e.employee_id)?.position || '—',
+          outlet: firstFilled(employeeById.get(e.employee_id)?.outlet, e.outlet) || '—',
           period: buildPeriod(e.evaluation_period_start, e.evaluation_period_end, e.evaluation_period_label),
           rawScore: e.total_raw_score ?? 0,
           finalScore: e.final_weighted_score ?? 0,
@@ -435,11 +479,12 @@ export default function Reports() {
 
         dss: dssItems.map((item: any) => {
           const result = dssById.get(item.result_id);
+          const emp = item.employee_id ? employeeById.get(item.employee_id) : null;
           return {
             rank: item.rank_no,
-            employee: `${item.employee_id}${item.employee_name ? ` - ${item.employee_name}` : ''}`,
-            position: item.position || '—',
-            outlet: item.outlet || '—',
+            employee: `${item.employee_id}${item.employee_name || emp ? ` - ${item.employee_name || getFullName(emp)}` : ''}`,
+            position: item.position || emp?.position || '—',
+            outlet: firstFilled(emp?.outlet, item.outlet) || '—',
             period: buildPeriod(result?.result_period_start, result?.result_period_end, result?.result_period_label),
             finalScore: item.final_weighted_score ?? 0,
             rating: item.rating_label || '—',
@@ -450,7 +495,7 @@ export default function Reports() {
 
         requests: requests.map((r: any) => ({
           id: r.request_id,
-          employee: r.employee_id || '—',
+          employee: `${r.employee_id || '—'}${employeeById.get(r.employee_id) ? ` - ${getFullName(employeeById.get(r.employee_id))}` : ''}`,
           type: r.request_type || '—',
           leaveType: r.leave_type || '—',
           date: buildPeriod(r.start_date, r.end_date),
@@ -508,13 +553,13 @@ export default function Reports() {
   const cols = COLUMNS[reportType] ?? [];
 
   const filtered = useMemo(() => {
-    return currentData.filter(row => {
-      const dateVal = row.date || row.dateApplied || row.createdAt || row.periodStart || row.submittedDate;
-      if (!dateVal) return true;
-      const d = String(dateVal).slice(0, 10);
-      return d >= dateFrom && d <= dateTo;
-    });
+    return currentData.filter(row => isWithinReportRange(row, dateFrom, dateTo));
   }, [currentData, dateFrom, dateTo]);
+
+  const getFilteredRowsForType = (type: string) => {
+    const rows = allData[type] ?? [];
+    return rows.filter(row => isWithinReportRange(row, dateFrom, dateTo));
+  };
 
   const paginated = useMemo(() => {
     const start = page * rowsPerPage;
@@ -526,6 +571,26 @@ export default function Reports() {
     if (currencyColumns.has(key)) return money(value);
     if (percentColumns.has(key)) return `${Number(value).toFixed(2)}${key === 'weight' || key === 'finalScore' || key === 'rawScore' ? '%' : ''}`;
     return String(value);
+  };
+
+  const escapeHtml = (value: any) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const hasPrintableValue = (value: any) => {
+    if (value === null || value === undefined) return false;
+    return String(value).trim() !== '' && String(value).trim() !== 'â€”';
+  };
+
+  const getPrintableColumns = (type: string, rows: any[]) => {
+    const sectionCols = COLUMNS[type] ?? [];
+    if (rows.length === 0) return sectionCols;
+    const filledCols = sectionCols.filter(col => rows.some(row => hasPrintableValue(row[col])));
+    return filledCols.length > 0 ? filledCols : sectionCols;
   };
 
   const exportCSV = () => {
@@ -577,8 +642,77 @@ export default function Reports() {
     win.print();
   };
 
+  const handlePrintAllReports = () => {
+    const generatedAt = new Date().toLocaleString();
+    const reportSections = REPORT_TYPES.map(rt => {
+      const rows = getFilteredRowsForType(rt.value);
+      const sectionCols = getPrintableColumns(rt.value, rows);
+      const tableRows = rows.length > 0
+        ? rows.map(row => `
+            <tr>
+              ${sectionCols.map(col => `<td>${escapeHtml(formatValue(col, row[col]))}</td>`).join('')}
+            </tr>
+          `).join('')
+        : `<tr><td colspan="${sectionCols.length || 1}" class="empty">No records in the selected date range.</td></tr>`;
+
+      return `
+        <section class="report-section">
+          <div class="section-title">
+            <h2>${escapeHtml(rt.label)}</h2>
+            <span>${rows.length} record${rows.length === 1 ? '' : 's'}</span>
+          </div>
+          <table>
+            <thead>
+              <tr>${sectionCols.map(col => `<th>${escapeHtml(labelize(col))}</th>`).join('')}</tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </section>
+      `;
+    }).join('');
+
+    const win = window.open('', '_blank', 'width=1100,height=800');
+    if (!win) return;
+
+    win.document.write(`
+      <html><head><title>All HRIS Reports</title>
+      <style>
+        @media print {
+          @page { size: A4 landscape; margin: 12mm; }
+          body { padding: 0; }
+          .report-section { break-inside: avoid; page-break-inside: avoid; }
+        }
+        body { font-family: Arial, sans-serif; padding: 24px; font-size: 10px; color: #1b1b1b; }
+        .cover { border-bottom: 3px solid #2e7d32; margin-bottom: 18px; padding-bottom: 12px; }
+        h1 { color: #1f7a46; margin: 0 0 6px; font-size: 22px; }
+        h2 { color: #1f7a46; margin: 0; font-size: 15px; }
+        p { color: #555; margin: 0; }
+        .report-section { margin: 18px 0 26px; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .section-title span { color: #1f7a46; font-weight: 700; border: 1px solid #a9dfb6; border-radius: 999px; padding: 3px 8px; }
+        table { width: 100%; border-collapse: collapse; table-layout: auto; }
+        th { background: #2e7d32; color: white; padding: 6px; text-align: left; font-size: 9px; overflow-wrap: anywhere; }
+        td { padding: 5px 6px; border-bottom: 1px solid #ddd; font-size: 9px; vertical-align: top; overflow-wrap: anywhere; }
+        tr:nth-child(even) td { background: #f5f5f5; }
+        .empty { color: #777; text-align: center; font-style: italic; }
+        .footer { color: #777; font-size: 9px; text-align: center; margin-top: 20px; }
+      </style></head><body>
+      <div class="cover">
+        <h1>Buenaventura Estate HRIS - All Reports</h1>
+        <p>Period: ${escapeHtml(dateFrom)} to ${escapeHtml(dateTo)} | Generated: ${escapeHtml(generatedAt)}</p>
+      </div>
+      ${reportSections}
+      <div class="footer">Buenaventura Estate HRIS | Generated: ${escapeHtml(generatedAt)} | Confidential</div>
+      </body></html>
+    `);
+
+    win.document.close();
+    win.print();
+  };
+
 
   const totalLoadedRecords = Object.values(allData).reduce<number>((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+  const totalFilteredRecords = REPORT_TYPES.reduce((sum, rt) => sum + getFilteredRowsForType(rt.value).length, 0);
   const reportStats = [
     {
       label: 'Current Report',
@@ -884,6 +1018,15 @@ export default function Reports() {
           >
             Export CSV
           </Button>
+          <Button
+            variant="outlined"
+            startIcon={<FileDownload />}
+            onClick={handlePrintAllReports}
+            disabled={loadingAll || totalFilteredRecords === 0}
+            sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark, bgcolor: '#ffffff' }}
+          >
+            Export All Reports
+          </Button>
         </Box>
       </Paper>
 
@@ -938,7 +1081,7 @@ export default function Reports() {
                       <CircularProgress size={16} sx={{ color: active ? '#ffffff' : GREEN_UI.green }} />
                     ) : (
                       <Chip
-                        label={`${(allData[rt.value] ?? []).length}`}
+                        label={`${getFilteredRowsForType(rt.value).length}`}
                         size="small"
                         variant="outlined"
                         sx={{

@@ -133,7 +133,7 @@ const FIELD_LABELS: Record<keyof JobForm, string> = {
   department: "Department",
   location: "Location",
   employment_type: "Employment Type",
-  salary_range: "Salary Range / Daily Rate",
+  salary_range: "Daily Rate",
   description: "Description",
   qualifications: "Qualifications",
   responsibilities: "Responsibilities",
@@ -686,7 +686,7 @@ export default function JobPostingManagement() {
                   whiteSpace: "nowrap",
                 }}
               >
-                Create Job Posting
+                Create New Job Posting
               </Button>
             </Stack>
           </CardContent>
@@ -884,15 +884,6 @@ export default function JobPostingManagement() {
                 Create your first job posting to display available career
                 opportunities.
               </Typography>
-
-              <Button
-                variant="contained"
-                startIcon={<AddCircleOutline />}
-                onClick={handleOpenCreate}
-                sx={greenButtonSx}
-              >
-                Create Job Posting
-              </Button>
             </CardContent>
           </Card>
         ) : (
@@ -1380,7 +1371,7 @@ export default function JobPostingManagement() {
                 <TextField
                   fullWidth
                   required
-                  label="Salary Range / Daily Rate"
+                  label="Daily Rate"
                   value={form.salary_range}
                   error={hasFieldError("salary_range")}
                   helperText={

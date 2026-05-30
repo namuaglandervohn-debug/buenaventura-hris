@@ -85,6 +85,11 @@ export default function RootLayout() {
         query = query.eq("recipient_role", "gm");
       }
 
+      // Supervisor notifications
+      else if (user.role === "supervisor") {
+        query = query.eq("recipient_role", "supervisor");
+      }
+
       const { data, error } = await query;
 
       if (error) throw error;

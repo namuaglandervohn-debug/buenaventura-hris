@@ -130,6 +130,20 @@ const formatPayrollDisplayId = (payrollId?: string | null, periodStart?: string 
   return `PAY-${year}-${String(seq || fallbackIndex).padStart(4, '0')}`;
 };
 
+const formatPayrollDisplayIdFromEmployee = (employeeId?: string | null, periodStart?: string | null, fallbackPayrollId?: string | null) => {
+  const rawEmployeeId = String(employeeId ?? '').trim();
+  const employeeMatch = rawEmployeeId.match(/^EMP-(\d{4})-(\d+)$/i);
+  if (employeeMatch) return `PAY-${employeeMatch[1]}-${String(Number(employeeMatch[2])).padStart(4, '0')}`;
+
+  const trailingNumber = rawEmployeeId.match(/(\d+)$/);
+  if (trailingNumber) {
+    const year = String(periodStart ?? new Date().toISOString().slice(0, 10)).slice(0, 4);
+    return `PAY-${year}-${String(Number(trailingNumber[1])).padStart(4, '0')}`;
+  }
+
+  return formatPayrollDisplayId(fallbackPayrollId, periodStart);
+};
+
 const parseSalaryRate = (value: unknown) => {
   if (typeof value === 'number') return value;
   const cleaned = String(value ?? '').replace(/,/g, '');
@@ -144,6 +158,9 @@ const fullNameFromEmployee = (row: any) => [row?.first_name, row?.middle_name, r
   .map((part) => String(part ?? '').trim())
   .filter(Boolean)
   .join(' ');
+
+const getEmployeeOutlet = (employee: any, userAccountOutlet?: string | null) =>
+  String(userAccountOutlet ?? employee?.outlet ?? '').trim();
 
 const statusColor = (status: Payroll['status']) => {
   if (status === 'Released') return 'success';
@@ -356,20 +373,22 @@ export default function PayrollComputation() {
     return `PAY-${yearText}-${String(maxSeq + 1).padStart(4, '0')}`;
   };
 
-  const mapItemToPayroll = (item: any, summariesById: Map<string, any>): Payroll => {
+  const mapItemToPayroll = (item: any, summariesById: Map<string, any>, employeesById = new Map<string, any>(), accountOutletsByEmployeeId = new Map<string, string>()): Payroll => {
     const summary = summariesById.get(item.payroll_id);
     const details = parsePayslipDetails(item.payslip_details);
+    const employee = employeesById.get(item.employee_id);
+    const displayId = formatPayrollDisplayIdFromEmployee(item.employee_id, summary?.period_start, item.payroll_id);
 
     return {
       id: item.payroll_item_id,
-      displayId: formatPayrollDisplayId(item.payroll_id, summary?.period_start),
+      displayId,
       payrollId: item.payroll_id,
       payrollItemId: item.payroll_item_id,
       employeeId: item.employee_id,
       attendanceSummaryId: item.attendance_summary_id,
-      employee: item.employee_name || item.employee_id || 'Unnamed Employee',
-      position: item.position || '',
-      outlet: item.outlet || '',
+      employee: item.employee_name || fullNameFromEmployee(employee) || item.employee_id || 'Unnamed Employee',
+      position: item.position || employee?.position || '',
+      outlet: String(item.outlet ?? '').trim() || getEmployeeOutlet(employee, accountOutletsByEmployeeId.get(item.employee_id)),
       period: monthFromDate(summary?.period_start),
       cutoffLabel: summary?.cutoff_label ?? '',
       totalHours: String(item.total_work_hours ?? item.regular_hours ?? '0'),
@@ -453,7 +472,29 @@ export default function PayrollComputation() {
 
       if (itemsError) throw itemsError;
 
-      const mapped = (items ?? []).map((item: any) => mapItemToPayroll(item, summaryMap));
+      const employeeIds = [...new Set((items ?? []).map((item: any) => String(item.employee_id ?? '')).filter(Boolean))];
+      let employeeMap = new Map<string, any>();
+      let accountOutletMap = new Map<string, string>();
+
+      if (employeeIds.length > 0) {
+        const { data: employees, error: employeesError } = await supabase
+          .from('employees')
+          .select('employee_id, first_name, middle_name, last_name, suffix, position, outlet')
+          .in('employee_id', employeeIds);
+
+        if (employeesError) throw employeesError;
+        employeeMap = new Map<string, any>((employees ?? []).map((employee: any) => [employee.employee_id, employee]));
+
+        const { data: userAccounts, error: userAccountsError } = await supabase
+          .from('user_accounts')
+          .select('employee_id, outlet')
+          .in('employee_id', employeeIds);
+
+        if (userAccountsError) throw userAccountsError;
+        accountOutletMap = new Map<string, string>((userAccounts ?? []).map((account: any) => [account.employee_id, String(account.outlet ?? '').trim()]));
+      }
+
+      const mapped = (items ?? []).map((item: any) => mapItemToPayroll(item, summaryMap, employeeMap, accountOutletMap));
       const seen = new Set<string>();
       setPayrolls(mapped.filter((p: Payroll) => {
         if (seen.has(p.id)) return false;
@@ -482,11 +523,24 @@ export default function PayrollComputation() {
       return;
     }
 
+    const employeeIds = (data ?? []).map((employee: any) => String(employee.employee_id ?? '')).filter(Boolean);
+    let accountOutletMap = new Map<string, string>();
+
+    if (employeeIds.length > 0) {
+      const { data: userAccounts, error: userAccountsError } = await supabase
+        .from('user_accounts')
+        .select('employee_id, outlet')
+        .in('employee_id', employeeIds);
+
+      if (userAccountsError) console.warn('Could not load user account outlets for payroll:', userAccountsError.message);
+      accountOutletMap = new Map<string, string>((userAccounts ?? []).map((account: any) => [account.employee_id, String(account.outlet ?? '').trim()]));
+    }
+
     setEmployeeOptions((data ?? []).map((employee: any) => ({
       employeeId: String(employee.employee_id ?? ''),
       name: fullNameFromEmployee(employee) || String(employee.employee_id ?? ''),
       position: String(employee.position ?? ''),
-      outlet: String(employee.outlet ?? ''),
+      outlet: getEmployeeOutlet(employee, accountOutletMap.get(employee.employee_id)),
       salary: employee.salary ?? null,
     })).filter(employee => employee.employeeId));
   };
@@ -526,6 +580,14 @@ export default function PayrollComputation() {
         throw new Error('Employee ID was not found in the employees table.');
       }
 
+      const { data: userAccount, error: userAccountError } = await supabase
+        .from('user_accounts')
+        .select('outlet')
+        .eq('employee_id', employee.employee_id)
+        .maybeSingle();
+
+      if (userAccountError) throw userAccountError;
+
       const { data: summary, error: summaryError } = await supabase
         .from('payroll_summaries')
         .upsert({
@@ -541,6 +603,8 @@ export default function PayrollComputation() {
       if (summaryError) throw summaryError;
 
       const employeeName = [employee.first_name, employee.middle_name, employee.last_name, employee.suffix].filter(Boolean).join(' ');
+      const payrollDisplayId = formatPayrollDisplayIdFromEmployee(employee.employee_id, start, summary.payroll_id);
+      const employeeOutlet = getEmployeeOutlet(employee, userAccount?.outlet);
       const gross = toNumber(form.grossPay);
       const deductions = toNumber(form.deductions);
       const net = toNumber(form.netPay) || Math.max(gross - deductions, 0);
@@ -552,7 +616,7 @@ export default function PayrollComputation() {
           employee_id: employee.employee_id,
           employee_name: employeeName,
           position: employee.position || form.position,
-          outlet: employee.outlet,
+          outlet: employeeOutlet,
           salary_rate: toNumber(employee.salary),
           rate_type: 'Monthly',
           total_work_hours: toNumber(form.totalHours),
@@ -563,7 +627,7 @@ export default function PayrollComputation() {
           gross_pay: gross,
           total_deductions: deductions,
           net_pay: net,
-          payslip_details: {},
+          payslip_details: { payrollDisplayId },
           remarks: 'Manual payroll entry',
         })
         .select()
@@ -607,7 +671,18 @@ export default function PayrollComputation() {
 
       if (employeesError) throw employeesError;
 
-      const employeeMap = new Map<string, any>((employees ?? []).map((employee: any) => [employee.employee_id, employee]));
+      const { data: userAccounts, error: userAccountsError } = await supabase
+        .from('user_accounts')
+        .select('employee_id, outlet')
+        .in('employee_id', employeeIds);
+
+      if (userAccountsError) throw userAccountsError;
+
+      const accountOutletMap = new Map<string, string>((userAccounts ?? []).map((account: any) => [account.employee_id, String(account.outlet ?? '').trim()]));
+      const employeeMap = new Map<string, any>((employees ?? []).map((employee: any) => [
+        employee.employee_id,
+        { ...employee, outlet: getEmployeeOutlet(employee, accountOutletMap.get(employee.employee_id)) },
+      ]));
       const targetEmployeeIds = new Set(
         employeeIds.filter((employeeId) => {
           const employee = employeeMap.get(employeeId);
@@ -662,7 +737,7 @@ export default function PayrollComputation() {
           employee_id: employeeId,
           employee_name: employeeName,
           position: employee?.position ?? '',
-          outlet: employee?.outlet ?? '',
+          outlet: getEmployeeOutlet(employee),
           period_start: start,
           period_end: end,
           period_type: 'Monthly',
@@ -738,7 +813,7 @@ export default function PayrollComputation() {
           employee_id: summary.employee_id,
           employee_name: summary.employee_name || fullNameFromEmployee(employee) || summary.employee_id,
           position,
-          outlet: summary.outlet || employee?.outlet || '',
+          outlet: summary.outlet || getEmployeeOutlet(employee),
           salary_rate: salaryRate,
           rate_type: 'Daily',
           total_work_hours: toNumber(summary.total_work_hours),
@@ -757,7 +832,7 @@ export default function PayrollComputation() {
           gross_pay: grossPay,
           total_deductions: totalDeductions,
           net_pay: netPay,
-          payslip_details: { payrollDisplayId: payrollId, hourlyRate: roundMoney(hourlyRate) },
+          payslip_details: { payrollDisplayId: formatPayrollDisplayIdFromEmployee(summary.employee_id, start, payrollId), hourlyRate: roundMoney(hourlyRate) },
           remarks: `Generated from Attendance Monitoring logs for ${generatePeriod}.`,
         };
       });
@@ -900,6 +975,10 @@ export default function PayrollComputation() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canManagePayroll) {
+      setSnackbar({ open: true, message: 'You do not have permission to delete payroll items.', severity: 'error' });
+      return;
+    }
     if (!window.confirm(`Delete payroll item ${id}? This cannot be undone.`)) return;
     try {
       const { error: deleteError } = await supabase
@@ -917,6 +996,7 @@ export default function PayrollComputation() {
   };
 
   const filtered = payrolls.filter(p => {
+    if (isAccountingFinance && !isGeneralManager && p.status === 'Draft') return false;
     const periodMatch = !filterPeriod || p.period === filterPeriod;
     const statusMatch = filterStatus === 'all' || p.status.toLowerCase().replace(' ', '') === filterStatus.toLowerCase().replace(' ', '');
     return periodMatch && statusMatch;
@@ -1499,7 +1579,7 @@ export default function PayrollComputation() {
                           }}
                         />
                       )}
-                      {(canManagePayroll || canReleasePayroll) && (
+                      {canManagePayroll && (
                         <Chip
                           icon={<DeleteOutline />}
                           label="Delete"

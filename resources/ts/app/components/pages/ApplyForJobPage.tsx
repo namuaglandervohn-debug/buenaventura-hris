@@ -158,11 +158,10 @@ const RELATIONSHIPS = ['Parent', 'Mother', 'Father', 'Spouse', 'Sibling', 'Broth
 
 const SKILLS = ['Communication Skills', 'Customer Service', 'Computer Literacy', 'Leadership', 'Time Management', 'Teamwork', 'Problem-Solving', 'Cash Handling', 'Food and Beverage Service', 'Housekeeping', 'Administrative Work'];
 
-const REQUIRED_DOCUMENTS = ['Resume/Biodata', 'Application Letter', 'Valid ID', 'Birth Certificate', 'Transcript of Records/Diploma', 'Certificate of Employment', 'Training Certificates', 'NBI/Police Clearance', 'Barangay Clearance', 'Medical Certificate'];
-
 const steps = ['Position', 'Personal', 'Education & Work', 'Skills', 'References', 'Documents'];
 
 type CharacterReference = { name: string; position: string; company: string; contact: string };
+type AddressPrefix = 'birthplace' | 'current' | 'permanent';
 type WorkExperience = {
   companyOrganization: string;
   positionHeld: string;
@@ -201,6 +200,7 @@ const EMPTY_EMERGENCY_CONTACT: EmergencyContact = {
 const EMPTY = {
   position: '', hearAbout: '', hearAboutOther: '',
   firstName: '', middleName: '', lastName: '', suffix: '', birthdate: '', age: '', gender: '', civilStatus: '', nationality: '', contactNumber: '', email: '',
+  birthplaceCountry: 'Philippines', birthplaceRegion: '', birthplaceProvince: '', birthplaceCity: '', birthplaceBarangay: '', birthplaceStreet: '', birthplaceZipCode: '',
   currentCountry: 'Philippines', currentRegion: '', currentProvince: '', currentCity: '', currentBarangay: '', currentStreet: '', currentZipCode: '', currentAddress: '',
   permanentCountry: 'Philippines', permanentRegion: '', permanentProvince: '', permanentCity: '', permanentBarangay: '', permanentStreet: '', permanentZipCode: '', permanentAddress: '',
   emergencyContactName: '', emergencyContactRelation: '', emergencyContactRelationOther: '', emergencyContactPhone: '', emergencyContactAddress: '',
@@ -308,6 +308,7 @@ export default function ApplyForJobPage() {
   const [applicantId, setApplicantId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [emailNotice, setEmailNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
@@ -316,7 +317,6 @@ export default function ApplyForJobPage() {
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([EMPTY_EMERGENCY_CONTACT]);
 
   const textFieldSx = {
-    '& .MuiInputLabel-root': { color: '#000000', fontWeight: 400, letterSpacing: '-0.01em' },
     '& .MuiInputLabel-root.Mui-focused': { color: '#000000', fontWeight: 400 },
     '& .MuiInputLabel-root.Mui-disabled': { color: '#000000', fontWeight: 400, opacity: 0.72 },
     '& .MuiInputLabel-asterisk': { color: '#000000' },
@@ -550,7 +550,7 @@ export default function ApplyForJobPage() {
   const getCityOptions = (province: string) => CITIES_BY_PROVINCE[province] ?? [];
   const getBarangayOptions = (city: string) => BARANGAYS_BY_CITY[city] ?? fallbackBarangays;
 
-  const handleAddressCountryChange = (prefix: 'current' | 'permanent', value: string) => {
+  const handleAddressCountryChange = (prefix: AddressPrefix, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [`${prefix}Country`]: value,
@@ -560,9 +560,10 @@ export default function ApplyForJobPage() {
       [`${prefix}Barangay`]: '',
       [`${prefix}ZipCode`]: '',
     } as FormState));
+    clearFieldError(`${prefix}Country` as FormKey);
   };
 
-  const handleAddressRegionChange = (prefix: 'current' | 'permanent', value: string) => {
+  const handleAddressRegionChange = (prefix: AddressPrefix, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [`${prefix}Region`]: value,
@@ -574,7 +575,7 @@ export default function ApplyForJobPage() {
     clearFieldError(`${prefix}Region` as FormKey);
   };
 
-  const handleAddressProvinceChange = (prefix: 'current' | 'permanent', value: string) => {
+  const handleAddressProvinceChange = (prefix: AddressPrefix, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [`${prefix}Province`]: value,
@@ -585,7 +586,7 @@ export default function ApplyForJobPage() {
     clearFieldError(`${prefix}Province` as FormKey);
   };
 
-  const handleAddressCityChange = (prefix: 'current' | 'permanent', value: string) => {
+  const handleAddressCityChange = (prefix: AddressPrefix, value: string) => {
     setFormData((prev) => ({
       ...prev,
       [`${prefix}City`]: value,
@@ -595,7 +596,7 @@ export default function ApplyForJobPage() {
     clearFieldError(`${prefix}City` as FormKey);
   };
 
-  const handleAddressBarangayChange = (prefix: 'current' | 'permanent', value: string) => {
+  const handleAddressBarangayChange = (prefix: AddressPrefix, value: string) => {
     setFormData((prev) => ({ ...prev, [`${prefix}Barangay`]: value } as FormState));
     clearFieldError(`${prefix}Barangay` as FormKey);
   };
@@ -614,7 +615,7 @@ export default function ApplyForJobPage() {
     }));
   };
 
-  const toggleListItem = (key: 'skills' | 'submittedDocuments', value: string) => {
+  const toggleListItem = (key: 'skills', value: string) => {
     setFormData((prev) => {
       const current = prev[key] as string[];
       return { ...prev, [key]: current.includes(value) ? current.filter((item) => item !== value) : [...current, value] };
@@ -685,6 +686,16 @@ export default function ApplyForJobPage() {
       if (formData.contactNumber && formData.contactNumber.length !== PHONE_LOCAL_LENGTH) errors.contactNumber = `Contact number must be exactly ${PHONE_LOCAL_LENGTH} digits after +63.`;
       if (!formData.email.trim()) errors.email = 'Email address is required.';
       if (formData.email && !validateEmail(formData.email)) errors.email = 'Please enter a valid email address.';
+      if (!formData.birthplaceCountry) errors.birthplaceCountry = 'Birthplace country is required.';
+      if (formData.birthplaceCountry === 'Philippines') {
+        if (!formData.birthplaceRegion) errors.birthplaceRegion = 'Birthplace region is required.';
+        if (!formData.birthplaceProvince) errors.birthplaceProvince = 'Birthplace province is required.';
+        if (!formData.birthplaceCity) errors.birthplaceCity = 'Birthplace city/municipality is required.';
+        if (!formData.birthplaceBarangay) errors.birthplaceBarangay = 'Birthplace barangay is required.';
+      }
+      if (!formData.birthplaceStreet.trim()) errors.birthplaceStreet = 'Birthplace street/address line is required.';
+      if (!formData.height) errors.height = 'Height is required.';
+      if (!formData.weight) errors.weight = 'Weight is required.';
       if (!formData.currentCountry) errors.currentCountry = 'Current country is required.';
       if (formData.currentCountry === 'Philippines') {
         if (!formData.currentRegion) errors.currentRegion = 'Current region is required.';
@@ -767,10 +778,31 @@ export default function ApplyForJobPage() {
   const handleBack = () => { if (activeStep > 0) { setActiveStep((prev) => prev - 1); setError(''); } };
   const validateAllSteps = () => { for (let i = 0; i < steps.length; i++) if (!validateStep(i)) { setActiveStep(i); return false; } return true; };
 
+  const sendApplicantIdEmail = async (payload: { applicantId: string; email: string; name: string; position: string }) => {
+    const response = await fetch('/api/applications/send-applicant-id-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        applicant_id: payload.applicantId,
+        email: payload.email,
+        name: payload.name,
+        position: payload.position,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.message || 'Unable to send applicant ID email.');
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validateAllSteps()) return;
-    setSubmitting(true); setError('');
+    setSubmitting(true); setError(''); setEmailNotice('');
     try {
       const { count, error: countError } = await supabase.from('applicants').select('*', { count: 'exact', head: true });
       if (countError) throw countError;
@@ -778,6 +810,7 @@ export default function ApplyForJobPage() {
       const applicantIdGenerated = `APP-2026-${nextNumber}`;
       const resumeFileData = resumeFiles[0] ? await fileToBase64(resumeFiles[0]) : null;
       const supportingDocumentFiles = await Promise.all(supportingFiles.map(async (file) => ({ name: file.name, type: file.type, data: await fileToBase64(file) })));
+      const birthplaceAddress = buildAddress(formData.birthplaceCountry, formData.birthplaceRegion, formData.birthplaceProvince, formData.birthplaceCity, formData.birthplaceBarangay, formData.birthplaceStreet, formData.birthplaceZipCode);
       const currentAddress = buildAddress(formData.currentCountry, formData.currentRegion, formData.currentProvince, formData.currentCity, formData.currentBarangay, formData.currentStreet, formData.currentZipCode);
       const permanentAddress = buildAddress(formData.permanentCountry, formData.permanentRegion, formData.permanentProvince, formData.permanentCity, formData.permanentBarangay, formData.permanentStreet, formData.permanentZipCode);
       const normalizedWorkExperiences = workExperiences
@@ -806,7 +839,8 @@ export default function ApplyForJobPage() {
       const primaryEmergencyContact = normalizedEmergencyContacts[0] ?? null;
       const applicantExperience = normalizedWorkExperiences[0]?.totalYearsExperience ?? '';
       const coverLetterData = {
-        hearAbout: formData.hearAbout, hearAboutOther: formData.hearAboutOther, age: formData.age, nationality: formData.nationality, currentAddress, permanentAddress,
+        hearAbout: formData.hearAbout, hearAboutOther: formData.hearAboutOther, age: formData.age, nationality: formData.nationality, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight, currentAddress, permanentAddress,
+        birthplaceParts: { country: formData.birthplaceCountry, region: formData.birthplaceRegion, province: formData.birthplaceProvince, city: formData.birthplaceCity, barangay: formData.birthplaceBarangay, street: formData.birthplaceStreet, zipCode: formData.birthplaceZipCode },
         currentAddressParts: { country: formData.currentCountry, region: formData.currentRegion, province: formData.currentProvince, city: formData.currentCity, barangay: formData.currentBarangay, street: formData.currentStreet, zipCode: formData.currentZipCode },
         permanentAddressParts: { country: formData.permanentCountry, region: formData.permanentRegion, province: formData.permanentProvince, city: formData.permanentCity, barangay: formData.permanentBarangay, street: formData.permanentStreet, zipCode: formData.permanentZipCode },
         educationBackground: { level: formData.education, schoolName: formData.schoolName, courseProgram: formData.courseProgram, yearGraduated: formData.yearGraduated, honorsAwards: formData.honorsAwards },
@@ -821,7 +855,7 @@ export default function ApplyForJobPage() {
       const fullName = `${formData.firstName} ${formData.middleName} ${formData.lastName} ${formData.suffix}`.replace(/\s+/g, ' ').trim();
       const { error: insertError } = await supabase.from('applicants').insert({
         applicant_id: applicantIdGenerated, name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
-        gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: formData.birthplace, height: formData.height, weight: formData.weight,
+        gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight,
         email: formData.email.trim().toLowerCase(), phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
         tin: formData.tin, sss: formData.sss, philhealth: formData.philhealth, pagibig: formData.pagibig,
         emergency_contact: primaryEmergencyContact ? `${primaryEmergencyContact.name} - ${primaryEmergencyContact.relation} - ${primaryEmergencyContact.phone}` : null,
@@ -834,6 +868,17 @@ export default function ApplyForJobPage() {
         { recipient_role: 'gm', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
       ]);
       if (notificationError) console.warn('Notification insert failed:', notificationError.message);
+      try {
+        await sendApplicantIdEmail({
+          applicantId: applicantIdGenerated,
+          email: formData.email.trim().toLowerCase(),
+          name: fullName,
+          position: formData.position,
+        });
+      } catch (emailError: any) {
+        console.warn('Applicant ID email failed:', emailError);
+        setEmailNotice('Application saved, but the Applicant ID email could not be sent. Please copy and save your Applicant ID.');
+      }
       setApplicantId(applicantIdGenerated); setSuccessDialog(true);
     } catch (err: any) {
       setError(err.message || 'Something went wrong while submitting the application.');
@@ -845,6 +890,7 @@ export default function ApplyForJobPage() {
     setSuccessDialog(false);
     setFormData(EMPTY);
     setFieldErrors({});
+    setEmailNotice('');
     setResumeFiles([]);
     setSupportingFiles([]);
     setCharacterReferences([{ ...EMPTY_CHARACTER_REFERENCE }]);
@@ -854,17 +900,18 @@ export default function ApplyForJobPage() {
     setError('');
   };
 
-  const renderCountrySelect = (prefix: 'current' | 'permanent', label = 'Country') => {
+  const renderCountrySelect = (prefix: AddressPrefix, label = 'Country') => {
     const value = formData[`${prefix}Country` as FormKey] as string;
+    const isRequired = prefix !== 'permanent';
     return (
-      <TextField fullWidth required={prefix === 'current'} select label={label} value={value} onChange={(e) => handleAddressCountryChange(prefix, e.target.value)} sx={textFieldSx} InputLabelProps={{ shrink: true }}>
+      <TextField fullWidth required={isRequired} select label={label} value={value} onChange={(e) => handleAddressCountryChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}Country` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Country` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }}>
         {COUNTRIES.map((country) => <MenuItem key={country} value={country}>{country}</MenuItem>)}
       </TextField>
     );
   };
 
-  const renderPhilippineAddressFields = (prefix: 'current' | 'permanent') => {
-    const isCurrent = prefix === 'current';
+  const renderPhilippineAddressFields = (prefix: AddressPrefix) => {
+    const isRequired = prefix !== 'permanent';
     const country = formData[`${prefix}Country` as FormKey] as string;
     const region = formData[`${prefix}Region` as FormKey] as string;
     const province = formData[`${prefix}Province` as FormKey] as string;
@@ -877,30 +924,30 @@ export default function ApplyForJobPage() {
       <>
         <Grid size={addressGrid}>{renderCountrySelect(prefix)}</Grid>
         <Grid size={addressGrid}>
-          <TextField fullWidth required={isCurrent} select label="Region" value={region} onChange={(e) => handleAddressRegionChange(prefix, e.target.value)} error={isCurrent && !!fieldErrors.currentRegion} helperText={isCurrent ? fieldErrors.currentRegion : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines'}>
+          <TextField fullWidth required={isRequired} select label="Region" value={region} onChange={(e) => handleAddressRegionChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}Region` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Region` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines'}>
             {Object.keys(PH_PROVINCES_BY_REGION).map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
         <Grid size={addressGrid}>
-          <TextField fullWidth required={isCurrent} select label="Province" value={province} onChange={(e) => handleAddressProvinceChange(prefix, e.target.value)} error={isCurrent && !!fieldErrors.currentProvince} helperText={isCurrent ? fieldErrors.currentProvince : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !region}>
+          <TextField fullWidth required={isRequired} select label="Province" value={province} onChange={(e) => handleAddressProvinceChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}Province` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Province` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !region}>
             {provinceOptions.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
         <Grid size={addressGrid}>
-          <TextField fullWidth required={isCurrent} select label="City / Municipality" value={city} onChange={(e) => handleAddressCityChange(prefix, e.target.value)} error={isCurrent && !!fieldErrors.currentCity} helperText={isCurrent ? fieldErrors.currentCity : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !province}>
+          <TextField fullWidth required={isRequired} select label="City / Municipality" value={city} onChange={(e) => handleAddressCityChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}City` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}City` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !province}>
             {cityOptions.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
         <Grid size={addressGrid}>
-          <TextField fullWidth required={isCurrent} select label="Barangay" value={formData[`${prefix}Barangay` as FormKey] as string} onChange={(e) => handleAddressBarangayChange(prefix, e.target.value)} error={isCurrent && !!fieldErrors.currentBarangay} helperText={isCurrent ? fieldErrors.currentBarangay : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !city}>
+          <TextField fullWidth required={isRequired} select label="Barangay" value={formData[`${prefix}Barangay` as FormKey] as string} onChange={(e) => handleAddressBarangayChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}Barangay` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Barangay` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !city}>
             {barangayOptions.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
         <Grid size={halfGrid}>
-          <TextField fullWidth required={isCurrent} label="Street / House No. / Purok" value={formData[`${prefix}Street` as FormKey] as string} onChange={set(`${prefix}Street` as FormKey)} error={isCurrent && !!fieldErrors.currentStreet} helperText={isCurrent ? fieldErrors.currentStreet : ''} inputProps={{ maxLength: 120 }} sx={textFieldSx} />
+          <TextField fullWidth required={isRequired} label="Street / House No. / Purok" value={formData[`${prefix}Street` as FormKey] as string} onChange={set(`${prefix}Street` as FormKey)} error={isRequired && !!fieldErrors[`${prefix}Street` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Street` as FormKey] : ''} inputProps={{ maxLength: 120 }} sx={textFieldSx} />
         </Grid>
         <Grid size={addressGrid}>
-          <TextField fullWidth label="ZIP Code" value={formData[`${prefix}ZipCode` as FormKey] as string} InputProps={{ readOnly: true }} helperText={city ? 'Auto-generated from selected city.' : 'Select city to auto-fill.'} sx={textFieldSx} />
+          <TextField fullWidth label="ZIP Code" value={formData[`${prefix}ZipCode` as FormKey] as string} InputProps={{ readOnly: true }} helperText={city ? 'Auto-generated from selected city.' : 'Select city to auto-fill.'}/>
         </Grid>
       </>
     );
@@ -1144,17 +1191,21 @@ export default function ApplyForJobPage() {
                 <Paper elevation={0} sx={stepPaperSx}>
                   <SectionTitle icon={<PersonOutline />} title="II. Personal Details" description="Enter your personal details and complete address information accurately." />
                   <Grid container spacing={2.5}>
-                    <Grid size={nameGrid}><TextField fullWidth required label="First Name" value={formData.firstName} onChange={setUpperText('firstName')} error={!!fieldErrors.firstName} helperText={fieldErrors.firstName} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
-                    <Grid size={nameGrid}><TextField fullWidth label="Middle Name" value={formData.middleName} onChange={setUpperText('middleName')} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
-                    <Grid size={nameGrid}><TextField fullWidth required label="Last Name" value={formData.lastName} onChange={setUpperText('lastName')} error={!!fieldErrors.lastName} helperText={fieldErrors.lastName} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
+                    <Grid size={nameGrid}><TextField fullWidth placeholder="e.g. John" required label="First Name" value={formData.firstName} onChange={setUpperText('firstName')} error={!!fieldErrors.firstName} helperText={fieldErrors.firstName} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
+                    <Grid size={nameGrid}><TextField fullWidth label="Middle Name (Optional)" value={formData.middleName} onChange={setUpperText('middleName')} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
+                    <Grid size={nameGrid}><TextField fullWidth placeholder="e.g. Doe" required label="Last Name" value={formData.lastName} onChange={setUpperText('lastName')} error={!!fieldErrors.lastName} helperText={fieldErrors.lastName} inputProps={{ maxLength: 50 }} sx={textFieldSx} /></Grid>
                     <Grid size={nameGrid}><TextField fullWidth select label="Suffix" value={formData.suffix} onChange={set('suffix')} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{SUFFIXES.map((suffix) => <MenuItem key={suffix || 'none'} value={suffix}>{suffix || 'None'}</MenuItem>)}</TextField></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required type="date" label="Date of Birth" value={formData.birthdate} onChange={setBirthdate} error={!!fieldErrors.birthdate} helperText={fieldErrors.birthdate} InputLabelProps={{ shrink: true }} sx={textFieldSx} /></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required label="Age" value={formData.age} onChange={setNumeric('age', 3)} error={!!fieldErrors.age || (!!formData.age && Number(formData.age) < 15)} helperText={fieldErrors.age || (formData.age && Number(formData.age) < 15 ? 'Age not qualified. Applicant must be at least 15 years old.' : 'Auto-computed from birthdate but editable.')} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 3 }} sx={textFieldSx} /></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required select label="Gender" value={formData.gender} onChange={set('gender')} error={!!fieldErrors.gender} helperText={fieldErrors.gender} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{GENDER.map((gender) => <MenuItem key={gender} value={gender}>{gender}</MenuItem>)}</TextField></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required select label="Civil Status" value={formData.civilStatus} onChange={set('civilStatus')} error={!!fieldErrors.civilStatus} helperText={fieldErrors.civilStatus} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{CIVIL_STATUS.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required select label="Nationality" value={formData.nationality} onChange={set('nationality')} error={!!fieldErrors.nationality} helperText={fieldErrors.nationality} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{NATIONALITIES.map((nationality) => <MenuItem key={nationality} value={nationality}>{nationality}</MenuItem>)}</TextField></Grid>
-                    <Grid size={fieldGrid}><TextField fullWidth required label="Contact Number" value={formData.contactNumber} onChange={setPhone('contactNumber')} error={!!fieldErrors.contactNumber} helperText={fieldErrors.contactNumber || 'Enter 10 digits after +63.'} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
-                    <Grid size={fieldGrid}><TextField fullWidth required type="email" label="Email Address" value={formData.email} onChange={setEmail} error={!!fieldErrors.email} helperText={fieldErrors.email} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
+                    <Grid size={fieldGrid}><TextField fullWidth placeholder="9XXXXXXXXX" required label="Contact Number" value={formData.contactNumber} onChange={setPhone('contactNumber')} error={!!fieldErrors.contactNumber} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
+                    <Grid size={fieldGrid}><TextField fullWidth placeholder="example@email.com" required type="email" label="Email Address" value={formData.email} onChange={setEmail} error={!!fieldErrors.email} helperText={fieldErrors.email} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
+                    <Grid size={fieldGrid}><TextField fullWidth required label="Height (cm)" value={formData.height} onChange={setNumeric('height', 3)} error={!!fieldErrors.height} helperText={fieldErrors.height} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 3 }} sx={textFieldSx} /></Grid>
+                    <Grid size={fieldGrid}><TextField fullWidth required label="Weight (kg)" value={formData.weight} onChange={setNumeric('weight', 3)} error={!!fieldErrors.weight} helperText={fieldErrors.weight} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 3 }} sx={textFieldSx} /></Grid>
+                    <Grid size={{ xs: 12 }}><Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 1 }}><LocationOnOutlined sx={{ color: '#166534' }} /><Typography fontWeight={700} sx={{ color: '#14532d' }}>Birthplace</Typography></Stack></Grid>
+                    {renderPhilippineAddressFields('birthplace')}
                     <Grid size={{ xs: 12 }}><Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 1 }}><LocationOnOutlined sx={{ color: '#166534' }} /><Typography fontWeight={700} sx={{ color: '#14532d' }}>Current Address</Typography></Stack></Grid>
                     {renderPhilippineAddressFields('current')}
                     <Grid size={{ xs: 12 }}><Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" spacing={2} sx={{ mt: 2, mb: 1 }}><Stack direction="row" spacing={1} alignItems="center"><HomeWorkOutlined sx={{ color: '#166534' }} /><Typography fontWeight={700} sx={{ color: '#14532d' }}>Permanent Address</Typography></Stack><Button type="button" variant="outlined" onClick={copyCurrentToPermanent} sx={{ ...softButtonSx, borderColor: '#166534', color: '#166534', background: '#ffffff', minHeight: { xs: 44, sm: 46 } }}>Same as Current Address</Button></Stack></Grid>
@@ -1168,12 +1219,11 @@ export default function ApplyForJobPage() {
                   <SectionTitle icon={<SchoolOutlined />} title="III. Highest Educational Background" description="Provide your highest educational background." />
                   <Stack spacing={3}>
                     <Paper elevation={0} sx={nestedPaperSx}>
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}><SchoolOutlined sx={{ color: '#166534' }} /><Typography fontWeight={700} sx={{ color: '#14532d' }}>Educational Background</Typography></Stack>
                       <Grid container spacing={2.5}>
                         <Grid size={fieldGrid}><TextField fullWidth required select label="Highest Educational Level" value={formData.education} onChange={set('education')} error={!!fieldErrors.education} helperText={fieldErrors.education} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{EDUCATIONAL_ATTAINMENT.map((level) => <MenuItem key={level} value={level}>{level}</MenuItem>)}</TextField></Grid>
                         <Grid size={fieldGrid}><TextField fullWidth required label="Name of School" value={formData.schoolName} onChange={set('schoolName')} error={!!fieldErrors.schoolName} helperText={fieldErrors.schoolName} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
                         <Grid size={fieldGrid}><TextField fullWidth label="Course / Program" value={formData.courseProgram} onChange={set('courseProgram')} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
-                        <Grid size={fieldGrid}><TextField fullWidth label="Year Graduated" value={formData.yearGraduated} onChange={setNumeric('yearGraduated', 4)} error={!!fieldErrors.yearGraduated} helperText={fieldErrors.yearGraduated} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 4 }} sx={textFieldSx} /></Grid>
+                        <Grid size={fieldGrid}><TextField fullWidth placeholder="e.g. 2005" label="Year Graduated" value={formData.yearGraduated} onChange={setNumeric('yearGraduated', 4)} error={!!fieldErrors.yearGraduated} helperText={fieldErrors.yearGraduated} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 4 }} sx={textFieldSx} /></Grid>
                         <Grid size={fullOnMobileGrid}><TextField fullWidth label="Honors / Awards" value={formData.honorsAwards} onChange={set('honorsAwards')} inputProps={{ maxLength: 160 }} sx={textFieldSx} /></Grid>
                       </Grid>
                     </Paper>
@@ -1239,7 +1289,7 @@ export default function ApplyForJobPage() {
                           <Grid size={fieldGrid}><TextField fullWidth label="Reference Name" value={reference.name} onChange={(e) => updateCharacterReferenceName(index, e.target.value)} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
                           <Grid size={fieldGrid}><TextField fullWidth label="Position" value={reference.position} onChange={(e) => updateCharacterReference(index, 'position', e.target.value)} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
                           <Grid size={fieldGrid}><TextField fullWidth label="Company / Organization" value={reference.company} onChange={(e) => updateCharacterReference(index, 'company', e.target.value)} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
-                          <Grid size={fieldGrid}><TextField fullWidth label="Reference Contact Number" value={reference.contact} onChange={(e) => updateCharacterReferenceContact(index, e.target.value)} helperText={`Enter ${PHONE_LOCAL_LENGTH} digits after +63.`} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
+                          <Grid size={fieldGrid}><TextField fullWidth placeholder="9XXXXXXXXX" label="Reference Contact Number" value={reference.contact} onChange={(e) => updateCharacterReferenceContact(index, e.target.value)} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
                         </Grid>
                       </Paper>
                     ))}
@@ -1263,7 +1313,7 @@ export default function ApplyForJobPage() {
                           <Grid size={fieldGrid}><TextField fullWidth required label="Emergency Contact Person" value={emergencyContact.name} onChange={(e) => updateEmergencyContactName(index, e.target.value)} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
                           <Grid size={fieldGrid}><TextField fullWidth required select label="Relationship" value={emergencyContact.relation} onChange={(e) => updateEmergencyContactRelation(index, e.target.value)} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{RELATIONSHIPS.map((relationship) => <MenuItem key={relationship} value={relationship}>{relationship}</MenuItem>)}</TextField></Grid>
                           {emergencyContact.relation === 'Other' && <Grid size={fieldGrid}><TextField fullWidth required label="Please specify relationship" value={emergencyContact.relationOther} onChange={(e) => updateEmergencyContactRelationOther(index, e.target.value)} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>}
-                          <Grid size={fieldGrid}><TextField fullWidth required label="Emergency Contact Number" value={emergencyContact.phone} onChange={(e) => updateEmergencyContactPhone(index, e.target.value)} helperText={`Enter ${PHONE_LOCAL_LENGTH} digits after +63.`} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
+                          <Grid size={fieldGrid}><TextField fullWidth placeholder="9XXXXXXXXX" required label="Emergency Contact Number" value={emergencyContact.phone} onChange={(e) => updateEmergencyContactPhone(index, e.target.value)} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
                           <Grid size={{ xs: 12, md: emergencyContact.relation === 'Other' ? 12 : 8 }}><TextField fullWidth label="Emergency Contact Address" value={emergencyContact.address} onChange={(e) => updateEmergencyContact(index, 'address', e.target.value)} inputProps={{ maxLength: 160 }} sx={textFieldSx} /></Grid>
                         </Grid>
                       </Paper>
@@ -1274,14 +1324,12 @@ export default function ApplyForJobPage() {
 
               {activeStep === 5 && (
                 <Paper elevation={0} sx={stepPaperSx}>
-                  <SectionTitle icon={<DescriptionOutlined />} title="VII. Required Documents and VIII. Applicant Declaration" description="Upload your resume and confirm the accuracy of your submitted information." />
-                  <FormGroup row>{REQUIRED_DOCUMENTS.map((documentName) => <FormControlLabel key={documentName} control={<Checkbox checked={formData.submittedDocuments.includes(documentName)} onChange={() => toggleListItem('submittedDocuments', documentName)} />} label={documentName} sx={compactChoiceSx} />)}</FormGroup>
+                  <SectionTitle icon={<DescriptionOutlined />} title="VII. Required Documents" description="Upload your resume and supporting documents." />
                   <Grid container spacing={2.5} sx={{ mt: 1 }}>
-                    <Grid size={{ xs: 12 }}><TextField fullWidth label="Other Document" value={formData.otherDocument} onChange={set('otherDocument')} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
                     <Grid size={halfGrid}><Button fullWidth component="label" variant="outlined" startIcon={<UploadFile />} sx={uploadButtonSx}><input hidden type="file" accept="*/*" onChange={(e) => { const files = Array.from(e.target.files ?? []); setResumeFiles(files.slice(0, 1)); clearFieldError('resumeFiles'); }} />{resumeFiles[0] ? `Resume: ${resumeFiles[0].name}` : 'Select Resume / Biodata'}</Button>{fieldErrors.resumeFiles && <Typography color="error" variant="caption" sx={{ mt: 1, display: 'block' }}>{fieldErrors.resumeFiles}</Typography>}</Grid>
                     <Grid size={halfGrid}><Button fullWidth component="label" variant="outlined" startIcon={<UploadFile />} sx={uploadButtonSx}><input hidden multiple type="file" onChange={(e) => { const selectedFiles = Array.from(e.target.files ?? []); setSupportingFiles((prev) => [...prev, ...selectedFiles]); e.target.value = ''; }} />{supportingFiles.length > 0 ? `Add More Supporting Documents (${supportingFiles.length} selected)` : 'Select Supporting Documents'}</Button></Grid>
-                    <Grid size={{ xs: 12 }}>{supportingFiles.length > 0 && <Paper elevation={0} sx={{ p: 2, borderRadius: 3, bgcolor: '#f9fcf9', border: '1px solid #cfe5d5' }}><Stack spacing={1}>{supportingFiles.map((file, fileIndex) => <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}><Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}><ArticleOutlined sx={{ color: '#166534', fontSize: 18 }} /><Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere', fontWeight: 700 }}>{file.name}</Typography></Stack><Button type="button" size="small" color="error" variant="outlined" onClick={() => setSupportingFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== fileIndex))} sx={{ textTransform: 'none', fontWeight: 600 }}>Remove</Button></Stack>)}</Stack></Paper>}</Grid>
-                    <Grid size={{ xs: 12 }}><Alert severity="info">I hereby certify that all information provided in this application form is true, complete, and correct to the best of my knowledge. I understand that any false information or omission may result in the rejection of my application or termination of employment if hired.</Alert></Grid>
+                    <Grid size={{ xs: 12 }}>{supportingFiles.length > 0 && <Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: '#f9fcf9', border: '1px solid #cfe5d5' }}><Stack spacing={1}>{supportingFiles.map((file, fileIndex) => <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}><Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}><ArticleOutlined sx={{ color: '#166534', fontSize: 18 }} /><Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere', fontWeight: 700 }}>{file.name}</Typography></Stack><Button type="button" size="small" color="error" variant="outlined" onClick={() => setSupportingFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== fileIndex))} sx={{ textTransform: 'none', fontWeight: 600 }}>Remove</Button></Stack>)}</Stack></Paper>}</Grid>
+                    <Grid size={{ xs: 12 }}><Typography variant="h6" fontWeight={700} sx={{ color: '#14532d', mt: 1 }}>VIII. Applicant Declaration</Typography></Grid>
                     <Grid size={halfGrid}><TextField fullWidth required label="Applicant's Signature / Full Name" value={formData.applicantSignature} onChange={setUpperText('applicantSignature')} error={!!fieldErrors.applicantSignature} helperText={fieldErrors.applicantSignature} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
                     <Grid size={halfGrid}><TextField fullWidth required type="date" label="Date" value={formData.declarationDate} onChange={set('declarationDate')} error={!!fieldErrors.declarationDate} helperText={fieldErrors.declarationDate} InputLabelProps={{ shrink: true }} sx={textFieldSx} /></Grid>
                   </Grid>
@@ -1298,7 +1346,7 @@ export default function ApplyForJobPage() {
       </Box>
 
       <Dialog open={successDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: '26px', border: '1px solid rgba(22,101,52,0.12)', boxShadow: '0 28px 80px rgba(15,23,42,0.18)' } }}>
-        <DialogContent sx={{ textAlign: 'center', p: { xs: 2.5, sm: 4 } }}><Box sx={{ width: { xs: 68, sm: 78 }, height: { xs: 68, sm: 78 }, borderRadius: '22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', mb: 2, background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', color: '#166534', boxShadow: '0 16px 34px rgba(22,101,52,0.18)' }}><VerifiedUserOutlined sx={{ fontSize: { xs: 42, sm: 50 } }} /></Box><Typography variant="h5" fontWeight={700} gutterBottom>Application Submitted Successfully</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Please save your Applicant ID. You will use this to track your application status.</Typography><Paper elevation={0} sx={{ p: 2, borderRadius: 3, bgcolor: 'rgba(31,122,71,0.08)', border: '1px solid rgba(31,122,71,0.18)', mb: 2 }}><Typography variant="h6" fontWeight={700} color="primary" sx={{ overflowWrap: 'anywhere' }}>{applicantId}</Typography></Paper>{copied && <Alert severity="success" sx={{ mb: 2 }}>Applicant ID copied!</Alert>}{copyFailed && <Alert severity="error" sx={{ mb: 2 }}>Unable to copy Applicant ID.</Alert>}</DialogContent>
+        <DialogContent sx={{ textAlign: 'center', p: { xs: 2.5, sm: 4 } }}><Box sx={{ width: { xs: 68, sm: 78 }, height: { xs: 68, sm: 78 }, borderRadius: '22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', mb: 2, background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', color: '#166534', boxShadow: '0 16px 34px rgba(22,101,52,0.18)' }}><VerifiedUserOutlined sx={{ fontSize: { xs: 42, sm: 50 } }} /></Box><Typography variant="h5" fontWeight={700} gutterBottom>Application Submitted Successfully</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Please save your Applicant ID. You will use this to track your application status. A copy will be sent to your email address.</Typography><Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: 'rgba(31,122,71,0.08)', border: '1px solid rgba(31,122,71,0.18)', mb: 2 }}><Typography variant="h6" fontWeight={700} color="primary" sx={{ overflowWrap: 'anywhere' }}>{applicantId}</Typography></Paper>{emailNotice && <Alert severity="warning" sx={{ mb: 2, textAlign: 'left' }}>{emailNotice}</Alert>}{copied && <Alert severity="success" sx={{ mb: 2 }}>Applicant ID copied!</Alert>}{copyFailed && <Alert severity="error" sx={{ mb: 2 }}>Unable to copy Applicant ID.</Alert>}</DialogContent>
         <DialogActions sx={{ p: { xs: 2, sm: 3 }, justifyContent: 'center', gap: 1, flexWrap: 'wrap' }}><Button variant="outlined" startIcon={<ContentCopy />} onClick={handleCopyId} sx={{ ...softButtonSx, borderColor: '#166534', color: '#166534', background: '#ffffff', width: { xs: '100%', sm: 'auto' } }}>Copy Applicant ID</Button><Button variant="contained" onClick={() => navigate('/track')} sx={{ ...softButtonSx, background: 'linear-gradient(135deg, #1F7A47 0%, #3FA46A 100%)', width: { xs: '100%', sm: 'auto' } }}>Track Application</Button><Button onClick={handleCloseDialog} sx={{ ...softButtonSx, width: { xs: '100%', sm: 'auto' } }}>Close</Button></DialogActions>
       </Dialog>
     </AuthBackground>

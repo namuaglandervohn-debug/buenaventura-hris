@@ -28,6 +28,7 @@ import {
 import {
   Add,
   AddCircleOutline,
+  AssignmentTurnedIn,
   DeleteOutline,
   Edit,
   EmojiEvents,
@@ -66,6 +67,13 @@ interface EmployeeRecord {
   status: string;
 }
 
+interface SupervisorAccount {
+  user_id: string;
+  name: string;
+  email: string;
+  employee_id: string;
+}
+
 interface EvaluationScoreRow {
   criteria_id: string;
   criteria_name: string;
@@ -84,6 +92,7 @@ interface EvaluationResult {
   evaluation_period_start: string;
   evaluation_period_end: string;
   evaluation_period_label: string | null;
+  evaluator_user_id: string | null;
   evaluator_name: string | null;
   evaluator_role: string | null;
   total_raw_score: number;
@@ -123,6 +132,7 @@ interface DssResultItem {
 }
 
 interface FormState {
+  evaluation_id: string;
   employee_id: string;
   employee_name: string;
   position: string;
@@ -169,6 +179,7 @@ function buildEmptyForm(criteria: CriterionDef[]): FormState {
   });
 
   return {
+    evaluation_id: "",
     employee_id: "",
     employee_name: "",
     position: "",
@@ -299,6 +310,7 @@ const statusChipSx = (status: EvaluationStatus | string) => {
     Approved: { bg: "#e5f8e9", color: "#217a43", border: "#a9dfb6" },
     Returned: { bg: "#fff7e0", color: "#9b6b00", border: "#f5d786" },
     Cancelled: { bg: "#fdeaea", color: "#9c2f2f", border: "#efb8b8" },
+    Active: { bg: '#e5f8e9', color: '#217a43', border: '#a9dfb6' },
     "Under Review": { bg: "#fff7e0", color: "#9b6b00", border: "#f5d786" },
   };
   const selected = styles[status] ?? styles.Draft;
@@ -350,14 +362,16 @@ export default function PerformanceEvaluation() {
   const isSupervisor = role.includes("supervisor");
   const isGM = role === "general_manager" || role.includes("gm") || role.includes("general");
   const isEmployee = role.includes("employee");
+  const currentUserId = String((user as any)?.id || (user as any)?.user_id || "");
   const currentUserName = String((user as any)?.name || (user as any)?.full_name || "Current User");
-  const currentEmployeeId = String((user as any)?.employee_id || "");
+  const currentEmployeeId = String((user as any)?.employeeId || (user as any)?.employee_id || "");
 
   const [criteria, setCriteria] = useState<CriterionDef[]>([]);
   const [criteriaReady, setCriteriaReady] = useState<{ total_weight: number; is_ready: boolean; message: string } | null>(null);
 
   const [evaluations, setEvaluations] = useState<EvaluationResult[]>([]);
   const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
+  const [supervisors, setSupervisors] = useState<SupervisorAccount[]>([]);
   const [latestDss, setLatestDss] = useState<DssResult | null>(null);
   const [ranking, setRanking] = useState<DssResultItem[]>([]);
 
@@ -371,6 +385,13 @@ export default function PerformanceEvaluation() {
   const selectedFormEmployee = form.employee_id
     ? employees.find((emp) => emp.employee_id === form.employee_id)
     : null;
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [assignForm, setAssignForm] = useState({
+    employee_id: "",
+    periodStart: monthStart(),
+    periodEnd: monthEnd(),
+    periodLabel: "",
+  });
 
   const [criteriaDialogOpen, setCriteriaDialogOpen] = useState(false);
   const [criteriaDraft, setCriteriaDraft] = useState<CriteriaEditorRow[]>([]);
@@ -461,6 +482,26 @@ export default function PerformanceEvaluation() {
     }
   };
 
+  const fetchSupervisors = async () => {
+    const { data, error: err } = await supabase
+      .from("user_accounts")
+      .select("user_id, employee_id, full_name, first_name, middle_name, last_name, suffix, email, role, is_active")
+      .order("full_name", { ascending: true });
+
+    if (err) throw err;
+
+    setSupervisors(
+      (data || [])
+        .filter((row: any) => row.is_active !== false && String(row.role || "").toLowerCase().includes("supervisor"))
+        .map((row: any) => ({
+          user_id: row.user_id,
+          employee_id: row.employee_id || "",
+          name: row.full_name || fullName(row) || row.email || row.user_id,
+          email: row.email || "",
+        }))
+    );
+  };
+
   const fetchEvaluations = async () => {
     const { data: evalRows, error: evalErr } = await supabase
       .from("employee_evaluations")
@@ -505,6 +546,7 @@ export default function PerformanceEvaluation() {
         evaluation_period_start: row.evaluation_period_start,
         evaluation_period_end: row.evaluation_period_end,
         evaluation_period_label: row.evaluation_period_label,
+        evaluator_user_id: row.evaluator_user_id || null,
         evaluator_name: row.evaluator_name,
         evaluator_role: row.evaluator_role,
         total_raw_score: Number(row.total_raw_score || 0),
@@ -549,7 +591,7 @@ export default function PerformanceEvaluation() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([fetchCriteria(), fetchEmployees(), fetchEvaluations(), fetchLatestDss()]);
+      await Promise.all([fetchCriteria(), fetchEmployees(), fetchSupervisors(), fetchEvaluations(), fetchLatestDss()]);
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Could not load performance evaluation data.");
@@ -573,14 +615,23 @@ export default function PerformanceEvaluation() {
     }
 
     if (isSupervisor) {
-      return evaluations.filter((e) => e.evaluator_name === currentUserName);
+      return evaluations.filter((e) => {
+        if (currentUserId && e.evaluator_user_id === currentUserId) return true;
+        return String(e.evaluator_role || "").toLowerCase().includes("supervisor");
+      });
     }
 
     return evaluations;
-  }, [currentEmployeeId, currentUserName, evaluations, isEmployee, isSupervisor]);
+  }, [currentEmployeeId, currentUserId, currentUserName, evaluations, isEmployee, isSupervisor]);
 
   const previewScore = computePreviewScore(form.scores, criteria);
   const topDssItem = ranking.find((r) => (r.recommendation || "").includes("Employee of the Month")) || ranking[0] || null;
+  const assignedDraftEvaluations = useMemo(
+    () => displayedEvaluations.filter((evaluation) => evaluation.status === "Draft"),
+    [displayedEvaluations]
+  );
+  const showEvaluationScores = !isHR || displayedEvaluations.some((evaluation) => evaluation.status !== "Draft");
+  const evaluationScoreColumnCount = showEvaluationScores ? criteria.length + 2 : 0;
 
   /* ── Evaluation actions ────────────────────────────────────────────── */
   const openEvaluateForEmployee = (emp?: EmployeeRecord) => {
@@ -593,6 +644,120 @@ export default function PerformanceEvaluation() {
       periodLabel: `${new Date().toLocaleString("default", { month: "long" })} ${new Date().getFullYear()} Evaluation`,
     });
     setEvalDialogOpen(true);
+  };
+
+  const openAssignedEvaluation = (evaluation: EvaluationResult) => {
+    const scores = { ...buildEmptyForm(criteria).scores };
+    criteria.forEach((criterion) => {
+      const existingScore = evaluation.scores[criterion.criteria_id];
+      if (existingScore) scores[criterion.criteria_id] = Number(existingScore.raw_score || 0);
+    });
+
+    setForm({
+      evaluation_id: evaluation.evaluation_id,
+      employee_id: evaluation.employee_id,
+      employee_name: evaluation.employee_name,
+      position: evaluation.position,
+      outlet: evaluation.outlet,
+      periodStart: evaluation.evaluation_period_start,
+      periodEnd: evaluation.evaluation_period_end,
+      periodLabel: evaluation.evaluation_period_label || "",
+      scores,
+      remarks: evaluation.remarks || "",
+    });
+    setEvalDialogOpen(true);
+  };
+
+  const openAssignDialog = () => {
+    setAssignForm({
+      employee_id: "",
+      periodStart: monthStart(),
+      periodEnd: monthEnd(),
+      periodLabel: `${new Date().toLocaleString("default", { month: "long" })} ${new Date().getFullYear()} Evaluation`,
+    });
+    setAssignDialogOpen(true);
+  };
+
+  const handleAssignEvaluation = async () => {
+    if (!assignForm.employee_id) {
+      showMessage("Please select an employee to assign.", "warning");
+      return;
+    }
+    if (!assignForm.periodStart || !assignForm.periodEnd) {
+      showMessage("Please select the evaluation period.", "warning");
+      return;
+    }
+
+    const employee = employees.find((emp) => emp.employee_id === assignForm.employee_id);
+    if (!employee) {
+      showMessage("Selected employee could not be found.", "error");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { data: evalId, error: templateErr } = await supabase.rpc("create_employee_evaluation_template", {
+        p_employee_id: employee.employee_id,
+        p_period_start: assignForm.periodStart,
+        p_period_end: assignForm.periodEnd,
+        p_period_label: assignForm.periodLabel || null,
+        p_evaluator_user_id: null,
+        p_evaluator_name: "Supervisor",
+        p_evaluator_role: "supervisor",
+      });
+
+      if (templateErr) throw templateErr;
+      const evaluationId = String(evalId);
+
+      const { error: updateErr } = await supabase
+        .from("employee_evaluations")
+        .update({
+          employee_name: employee.name,
+          position: employee.position,
+          outlet: employee.outlet,
+          evaluator_user_id: null,
+          evaluator_name: "Supervisor",
+          evaluator_role: "supervisor",
+          status: "Draft",
+          remarks: `Assigned by ${currentUserName}.`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("evaluation_id", evaluationId);
+
+      if (updateErr) throw updateErr;
+
+      const { error: notificationError } = await supabase.from("notifications").insert({
+        recipient_role: "supervisor",
+        title: "Employee Assigned for Evaluation",
+        message: `${currentUserName} submitted ${employee.name} for performance evaluation.`,
+        type: "performance_evaluation",
+      });
+      if (notificationError) console.warn("Evaluation assignment notification failed:", notificationError.message);
+
+      await supabase.rpc("create_system_log", {
+        p_user_id: null,
+        p_user_name: currentUserName,
+        p_user_role: (user as any)?.role || null,
+        p_action: "ASSIGN_EVALUATION",
+        p_module: "Performance Evaluation",
+        p_record_id: evaluationId,
+        p_record_table: "employee_evaluations",
+        p_description: `Submitted ${employee.name} to Supervisor for evaluation.`,
+        p_old_data: null,
+        p_new_data: { employee_id: employee.employee_id, evaluator_role: "supervisor" },
+        p_ip_address: null,
+        p_user_agent: navigator.userAgent,
+      });
+
+      setAssignDialogOpen(false);
+      showMessage(`${employee.name} was submitted to Supervisor for evaluation.`, "success");
+      await refreshAll();
+    } catch (err: any) {
+      console.error(err);
+      showMessage(`Failed: ${err?.message || "Could not assign evaluation."}`, "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSubmitEvaluation = async () => {
@@ -617,19 +782,21 @@ export default function PerformanceEvaluation() {
       const employeePosition = linkedEmployee?.position || form.position || "";
       const employeeOutlet = linkedEmployee?.outlet || form.outlet || "";
 
-      const { data: evalId, error: templateErr } = await supabase.rpc("create_employee_evaluation_template", {
-        p_employee_id: form.employee_id,
-        p_period_start: form.periodStart,
-        p_period_end: form.periodEnd,
-        p_period_label: form.periodLabel || null,
-        p_evaluator_user_id: null, // kept null to avoid FK errors if custom login user_id is not in user_accounts
-        p_evaluator_name: currentUserName,
-        p_evaluator_role: (user as any)?.role || "Supervisor",
-      });
+      let evaluationId = form.evaluation_id;
+      if (!evaluationId) {
+        const { data: evalId, error: templateErr } = await supabase.rpc("create_employee_evaluation_template", {
+          p_employee_id: form.employee_id,
+          p_period_start: form.periodStart,
+          p_period_end: form.periodEnd,
+          p_period_label: form.periodLabel || null,
+          p_evaluator_user_id: null, // kept null to avoid FK errors if custom login user_id is not in user_accounts
+          p_evaluator_name: currentUserName,
+          p_evaluator_role: (user as any)?.role || "Supervisor",
+        });
 
-      if (templateErr) throw templateErr;
-
-      const evaluationId = String(evalId);
+        if (templateErr) throw templateErr;
+        evaluationId = String(evalId);
+      }
       const updatePromises = criteria.map((c) =>
         supabase
           .from("employee_evaluation_scores")
@@ -655,6 +822,7 @@ export default function PerformanceEvaluation() {
           status: "Submitted",
           remarks: form.remarks || null,
           submitted_at: new Date().toISOString(),
+          evaluator_user_id: null,
           evaluator_name: currentUserName,
           evaluator_role: (user as any)?.role || "Supervisor",
         })
@@ -1086,11 +1254,11 @@ export default function PerformanceEvaluation() {
               </Button>
             )}
 
-            {(isSupervisor || isHR) && (
+            {isHR && (
               <Button
                 variant="contained"
                 startIcon={<AddCircleOutline />}
-                onClick={() => openEvaluateForEmployee()}
+                onClick={openAssignDialog}
                 sx={{
                   ...pillButtonSx,
                   py: 1.1,
@@ -1099,7 +1267,7 @@ export default function PerformanceEvaluation() {
                   "&:hover": { bgcolor: "#17633a" },
                 }}
               >
-                New Evaluation
+                Assign Evaluation
               </Button>
             )}
 
@@ -1262,31 +1430,31 @@ export default function PerformanceEvaluation() {
               </Box>
               <Box>
                 <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                  Employee List
+                  Assigned Evaluations
                 </Typography>
                 <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                  Select an employee to evaluate.
+                  Evaluate only employees assigned to you by HR/Admin.
                 </Typography>
               </Box>
             </Box>
           </Box>
 
           <TableContainer sx={{ overflowX: "auto", "&::-webkit-scrollbar": { height: 10 }, "&::-webkit-scrollbar-thumb": { bgcolor: "#cfe8d1"} }}>
-            {employeesLoading ? (
+            {loading ? (
               <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", py: 7, gap: 2 }}>
                 <CircularProgress size={28} sx={{ color: GREEN_UI.green }} />
-                <Typography sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>Loading employees…</Typography>
+                <Typography sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>Loading assigned evaluations...</Typography>
               </Box>
             ) : (
-              <Table sx={{ ...tableSx, minWidth: 760 }}>
+              <Table sx={{ ...tableSx, minWidth: 860 }}>
                 <TableHead>
                   <TableRow sx={tableHeadRowSx}>
                     {[
-                      "Employee ID",
-                      "Name",
+                      "Evaluation ID",
+                      "Employee",
                       "Position",
                       "Outlet",
-                      "Status",
+                      "Period",
                       "Action",
                     ].map((h) => (
                       <TableCell key={h}>{h}</TableCell>
@@ -1294,7 +1462,7 @@ export default function PerformanceEvaluation() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {employees.length === 0 ? (
+                  {assignedDraftEvaluations.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} align="center" sx={{ py: 7 }}>
                         <Box sx={{ maxWidth: 360, mx: "auto" }}>
@@ -1302,23 +1470,26 @@ export default function PerformanceEvaluation() {
                             <Groups />
                           </Box>
                           <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                            No employees found
+                            No assigned evaluations
                           </Typography>
                           <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 0.5 }}>
-                            Active employee records will appear here once loaded.
+                            HR/Admin assignments will appear here when they are ready for evaluation.
                           </Typography>
                         </Box>
                       </TableCell>
                     </TableRow>
                   ) : (
-                    employees.map((emp) => (
-                      <TableRow key={emp.employee_id} hover>
+                    assignedDraftEvaluations.map((emp) => (
+                      <TableRow key={emp.evaluation_id} hover>
                         <TableCell>
-                          <Chip label={emp.employee_id} size="small" variant="outlined" sx={{ fontWeight: 600, bgcolor: "#f8fcf5", borderColor: GREEN_UI.border }} />
+                          <Chip label={emp.evaluation_id} size="small" variant="outlined" sx={{ fontWeight: 600, bgcolor: "#f8fcf5", borderColor: GREEN_UI.border }} />
                         </TableCell>
                         <TableCell sx={{ whiteSpace: "nowrap" }}>
                           <Typography fontWeight={600} sx={{ color: GREEN_UI.text }}>
-                            {emp.name}
+                            {emp.employee_name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+                            {emp.employee_id}
                           </Typography>
                         </TableCell>
                         <TableCell sx={{ whiteSpace: "nowrap" }}>
@@ -1327,9 +1498,7 @@ export default function PerformanceEvaluation() {
                           </Typography>
                         </TableCell>
                         <TableCell sx={{ whiteSpace: "nowrap" }}>{emp.outlet || "—"}</TableCell>
-                        <TableCell>
-                          <Chip label={emp.status} size="small" variant="outlined" sx={statusChipSx(emp.status)} />
-                        </TableCell>
+                        <TableCell sx={{ whiteSpace: "nowrap" }}>{formatPeriod(emp)}</TableCell>
                         <TableCell>
                           <Chip
                             label="Evaluate"
@@ -1337,7 +1506,7 @@ export default function PerformanceEvaluation() {
                             clickable
                             variant="outlined"
                             icon={<AddCircleOutline />}
-                            onClick={() => openEvaluateForEmployee(emp)}
+                            onClick={() => openAssignedEvaluation(emp)}
                             sx={actionChipSx("primary")}
                           />
                         </TableCell>
@@ -1372,14 +1541,17 @@ export default function PerformanceEvaluation() {
             <TableHead>
               <TableRow sx={tableHeadRowSx}>
                 {[
-                  "Rank",
                   "Employee",
                   "Position",
                   "Outlet",
                   "Period",
-                  ...criteria.map((c) => `${c.criteria_name} (${Number(c.weight || 0)}%)`),
-                  "Final Score",
-                  "Rating",
+                  ...(showEvaluationScores
+                    ? [
+                        ...criteria.map((c) => `${c.criteria_name} (${Number(c.weight || 0)}%)`),
+                        "Final Score",
+                        "Rating",
+                      ]
+                    : []),
                   "Status",
                   ...(isHR || isGM ? ["Actions"] : []),
                 ].map((h) => (
@@ -1391,7 +1563,7 @@ export default function PerformanceEvaluation() {
             <TableBody>
               {displayedEvaluations.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8 + criteria.length + (isHR || isGM ? 1 : 0)} align="center" sx={{ py: 7 }}>
+                  <TableCell colSpan={5 + evaluationScoreColumnCount + (isHR || isGM ? 1 : 0)} align="center" sx={{ py: 7 }}>
                     <Box sx={{ maxWidth: 380, mx: "auto" }}>
                       <Box sx={{ width: 54, height: 54, borderRadius: "20px", display: "grid", placeItems: "center", mx: "auto", mb: 1.5, bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark }}>
                         <TaskAlt />
@@ -1408,15 +1580,6 @@ export default function PerformanceEvaluation() {
               ) : (
                 displayedEvaluations.map((r, i) => (
                   <TableRow key={r.evaluation_id} hover sx={{ bgcolor: i === 0 ? "rgba(255, 255, 255, 0.36)" : "inherit" }}>
-                    <TableCell>
-                      <Chip
-                        icon={i === 0 ? <EmojiEvents /> : undefined}
-                        label={`#${i + 1}`}
-                        size="small"
-                        variant="outlined"
-                        sx={i === 0 ? ratingChipSx(90) : { fontWeight: 600, bgcolor: "#f8fcf5", borderColor: GREEN_UI.border }}
-                      />
-                    </TableCell>
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
                       <Typography fontWeight={600} sx={{ color: GREEN_UI.text }}>
                         {r.employee_name}
@@ -1432,6 +1595,18 @@ export default function PerformanceEvaluation() {
                     </TableCell>
                     <TableCell sx={{ whiteSpace: "nowrap" }}>{r.outlet || "—"}</TableCell>
                     <TableCell sx={{ whiteSpace: "nowrap" }}>{formatPeriod(r)}</TableCell>
+                    {showEvaluationScores && (
+                      r.status === "Draft" ? (
+                        <TableCell colSpan={evaluationScoreColumnCount} align="center" sx={{ whiteSpace: "nowrap" }}>
+                          <Chip
+                            label="Pending supervisor evaluation"
+                            size="small"
+                            variant="outlined"
+                            sx={statusChipSx("Draft")}
+                          />
+                        </TableCell>
+                      ) : (
+                        <>
                     {criteria.map((c) => {
                       const s = r.scores[c.criteria_id];
                       return (
@@ -1458,6 +1633,9 @@ export default function PerformanceEvaluation() {
                         sx={ratingChipSx(Number(r.final_weighted_score || 0))}
                       />
                     </TableCell>
+                        </>
+                      )
+                    )}
                     <TableCell>
                       <Chip
                         label={isEmployee && r.status === "Submitted" ? "Under Review" : r.status}
@@ -1627,6 +1805,98 @@ export default function PerformanceEvaluation() {
         </Paper>
       )}
 
+      <Dialog open={assignDialogOpen} onClose={() => setAssignDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle fontWeight={700} sx={dialogTitleSx}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
+            <Box sx={{ width: 38, height: 38, borderRadius: "14px", display: "grid", placeItems: "center", bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark }}>
+              <AssignmentTurnedIn fontSize="small" />
+            </Box>
+            <Box>
+              <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
+                Assign Employee for Evaluation
+              </Typography>
+              <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+                Choose the employee and evaluation period. The supervisor is assigned automatically.
+              </Typography>
+            </Box>
+          </Box>
+        </DialogTitle>
+
+        <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: "#fbfff9" }}>
+          <Grid container spacing={2} sx={{ mt: 2.25 }}>
+            <Grid size={12}>
+              <TextField
+                fullWidth
+                select
+                label="Employee"
+                value={assignForm.employee_id}
+                onChange={(e) => setAssignForm((prev) => ({ ...prev, employee_id: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                sx={softTextFieldSx}
+              >
+                <MenuItem value="">Select employee...</MenuItem>
+                {employees.map((emp) => (
+                  <MenuItem key={emp.employee_id} value={emp.employee_id}>
+                    {emp.employee_id} - {emp.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Period Start"
+                type="date"
+                value={assignForm.periodStart}
+                onChange={(e) => setAssignForm((prev) => ({ ...prev, periodStart: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                sx={softTextFieldSx}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Period End"
+                type="date"
+                value={assignForm.periodEnd}
+                onChange={(e) => setAssignForm((prev) => ({ ...prev, periodEnd: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                sx={softTextFieldSx}
+              />
+            </Grid>
+
+            <Grid size={12}>
+              <TextField
+                fullWidth
+                label="Period Label"
+                value={assignForm.periodLabel}
+                onChange={(e) => setAssignForm((prev) => ({ ...prev, periodLabel: e.target.value }))}
+                placeholder="Example: May 2026 Evaluation"
+                InputLabelProps={{ shrink: true }}
+                sx={softTextFieldSx}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+
+        <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, bgcolor: "#fbfff9", borderTop: `1px solid ${GREEN_UI.border}` }}>
+          <Button onClick={() => setAssignDialogOpen(false)} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleAssignEvaluation}
+            disabled={saving || !assignForm.employee_id}
+            startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <AssignmentTurnedIn />}
+            sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, "&:hover": { bgcolor: GREEN_UI.greenDark } }}
+          >
+            {saving ? "Assigning..." : "Assign to Supervisor"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={evalDialogOpen} onClose={() => setEvalDialogOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: dialogPaperSx }}>
         <DialogTitle fontWeight={700} sx={dialogTitleSx}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
@@ -1661,11 +1931,12 @@ export default function PerformanceEvaluation() {
                     outlet: selected?.outlet || "",
                   });
                 }}
+                disabled={Boolean(form.evaluation_id) || isSupervisor}
                 InputLabelProps={{ shrink: true }}
                 sx={softTextFieldSx}
               >
                 <MenuItem value="">Select employee…</MenuItem>
-                {employees.map((emp) => (
+                {(form.evaluation_id ? employees.filter((emp) => emp.employee_id === form.employee_id) : employees).map((emp) => (
                   <MenuItem key={emp.employee_id} value={emp.employee_id}>
                     {emp.employee_id}
                   </MenuItem>
@@ -1684,6 +1955,7 @@ export default function PerformanceEvaluation() {
                 label="Position"
                 value={form.position}
                 onChange={(e) => setForm({ ...form, position: e.target.value })}
+                disabled={Boolean(form.evaluation_id) || isSupervisor}
                 InputLabelProps={{ shrink: true }}
                 sx={softTextFieldSx}
               >
@@ -1698,7 +1970,7 @@ export default function PerformanceEvaluation() {
                 select
                 label="Outlet / Branch"
                 value={form.outlet}
-                disabled={Boolean(selectedFormEmployee?.outlet)}
+                disabled={Boolean(form.evaluation_id) || Boolean(selectedFormEmployee?.outlet)}
                 onChange={(e) => setForm({ ...form, outlet: e.target.value })}
                 InputLabelProps={{ shrink: true }}
                 sx={softTextFieldSx}
@@ -1709,15 +1981,15 @@ export default function PerformanceEvaluation() {
             </Grid>
 
             <Grid size={{ xs: 12, md: 4 }}>
-              <TextField fullWidth label="Period Start" type="date" value={form.periodStart} onChange={(e) => setForm({ ...form, periodStart: e.target.value })} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
+              <TextField fullWidth label="Period Start" type="date" value={form.periodStart} onChange={(e) => setForm({ ...form, periodStart: e.target.value })} disabled={Boolean(form.evaluation_id) || isSupervisor} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
             </Grid>
 
             <Grid size={{ xs: 12, md: 4 }}>
-              <TextField fullWidth label="Period End" type="date" value={form.periodEnd} onChange={(e) => setForm({ ...form, periodEnd: e.target.value })} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
+              <TextField fullWidth label="Period End" type="date" value={form.periodEnd} onChange={(e) => setForm({ ...form, periodEnd: e.target.value })} disabled={Boolean(form.evaluation_id) || isSupervisor} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
             </Grid>
 
             <Grid size={{ xs: 12, md: 4 }}>
-              <TextField fullWidth label="Period Label" value={form.periodLabel} onChange={(e) => setForm({ ...form, periodLabel: e.target.value })} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
+              <TextField fullWidth label="Period Label" value={form.periodLabel} onChange={(e) => setForm({ ...form, periodLabel: e.target.value })} disabled={Boolean(form.evaluation_id) || isSupervisor} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
             </Grid>
           </Grid>
 
