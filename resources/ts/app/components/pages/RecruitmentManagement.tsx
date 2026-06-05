@@ -1004,7 +1004,7 @@ export default function RecruitmentManagement() {
         last_name: lastName,
         full_name: fullName,
         suffix,
-        email: `${loginName}@hris.com`,
+        email: `${loginName}@buenaventura-hris.me`,
         role: 'employee',
         outlet: '',
         is_active: true,

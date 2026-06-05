@@ -180,6 +180,7 @@ type EmergencyContact = {
 
 const PHONE_COUNTRY_CODE = '+63';
 const PHONE_LOCAL_LENGTH = 10;
+const GMAIL_ONLY_MESSAGE = 'Only Gmail email addresses are accepted. Please enter a valid @gmail.com address.';
 const EMPTY_CHARACTER_REFERENCE: CharacterReference = { name: '', position: '', company: '', contact: '' };
 const EMPTY_WORK_EXPERIENCE: WorkExperience = {
   companyOrganization: '',
@@ -664,6 +665,7 @@ export default function ApplyForJobPage() {
   const removeEmergencyContact = (index: number) => setEmergencyContacts((prev) => prev.length === 1 ? prev : prev.filter((_, currentIndex) => currentIndex !== index));
 
   const validateEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  const isGmailAddress = (value: string) => value.trim().toLowerCase().endsWith('@gmail.com');
 
   const validateStep = (stepIndex: number) => {
     const errors: FieldErrors = {};
@@ -686,6 +688,7 @@ export default function ApplyForJobPage() {
       if (formData.contactNumber && formData.contactNumber.length !== PHONE_LOCAL_LENGTH) errors.contactNumber = `Contact number must be exactly ${PHONE_LOCAL_LENGTH} digits after +63.`;
       if (!formData.email.trim()) errors.email = 'Email address is required.';
       if (formData.email && !validateEmail(formData.email)) errors.email = 'Please enter a valid email address.';
+      if (formData.email && validateEmail(formData.email) && !isGmailAddress(formData.email)) errors.email = GMAIL_ONLY_MESSAGE;
       if (!formData.birthplaceCountry) errors.birthplaceCountry = 'Birthplace country is required.';
       if (formData.birthplaceCountry === 'Philippines') {
         if (!formData.birthplaceRegion) errors.birthplaceRegion = 'Birthplace region is required.';
@@ -799,11 +802,34 @@ export default function ApplyForJobPage() {
     }
   };
 
+  const validateRecipientEmail = async (email: string) => {
+    const response = await fetch('/api/applications/validate-recipient-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      const message =
+        body?.errors?.email?.[0] ||
+        body?.message ||
+        GMAIL_ONLY_MESSAGE;
+      throw new Error(message);
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validateAllSteps()) return;
     setSubmitting(true); setError(''); setEmailNotice('');
     try {
+      const applicantEmail = formData.email.trim().toLowerCase();
+      await validateRecipientEmail(applicantEmail);
+
       const { count, error: countError } = await supabase.from('applicants').select('*', { count: 'exact', head: true });
       if (countError) throw countError;
       const nextNumber = ((count ?? 0) + 1).toString().padStart(4, '0');
@@ -856,32 +882,41 @@ export default function ApplyForJobPage() {
       const { error: insertError } = await supabase.from('applicants').insert({
         applicant_id: applicantIdGenerated, name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
         gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight,
-        email: formData.email.trim().toLowerCase(), phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
+        email: applicantEmail, phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
         tin: formData.tin, sss: formData.sss, philhealth: formData.philhealth, pagibig: formData.pagibig,
         emergency_contact: primaryEmergencyContact ? `${primaryEmergencyContact.name} - ${primaryEmergencyContact.relation} - ${primaryEmergencyContact.phone}` : null,
         resume_file_name: resumeFiles[0]?.name ?? null, resume_file_data: resumeFileData, supporting_documents: supportingFiles.map((file) => file.name), supporting_document_files: supportingDocumentFiles, status: 'Submitted',
       });
       if (insertError) throw insertError;
+
+      try {
+        await sendApplicantIdEmail({
+          applicantId: applicantIdGenerated,
+          email: applicantEmail,
+          name: fullName,
+          position: formData.position,
+        });
+      } catch (emailError: any) {
+        console.warn('Applicant ID email failed:', emailError);
+        await supabase.from('applicants').delete().eq('applicant_id', applicantIdGenerated);
+        throw new Error(emailError?.message || 'Applicant ID could not be sent. Please try again later.');
+      }
+
       saveApplicationFiles(applicantIdGenerated, { resumeFileName: resumeFiles[0]?.name ?? null, resumeFileData, supportingDocuments: supportingFiles.map((file) => file.name), supportingDocumentFiles });
       const { error: notificationError } = await supabase.from('notifications').insert([
         { recipient_role: 'hr', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
         { recipient_role: 'gm', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
       ]);
       if (notificationError) console.warn('Notification insert failed:', notificationError.message);
-      try {
-        await sendApplicantIdEmail({
-          applicantId: applicantIdGenerated,
-          email: formData.email.trim().toLowerCase(),
-          name: fullName,
-          position: formData.position,
-        });
-      } catch (emailError: any) {
-        console.warn('Applicant ID email failed:', emailError);
-        setEmailNotice('Application saved, but the Applicant ID email could not be sent. Please copy and save your Applicant ID.');
-      }
+
       setApplicantId(applicantIdGenerated); setSuccessDialog(true);
     } catch (err: any) {
-      setError(err.message || 'Something went wrong while submitting the application.');
+      const message = err.message || 'Something went wrong while submitting the application.';
+      if (message.toLowerCase().includes('email')) {
+        setActiveStep(1);
+        setFieldErrors((prev) => ({ ...prev, email: message }));
+      }
+      setError(message);
     } finally { setSubmitting(false); }
   };
 

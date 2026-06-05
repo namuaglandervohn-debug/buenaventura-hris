@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
 
 /*
 | Laravel API routes — use these when moving logic off Supabase.
@@ -18,6 +19,38 @@ Route::get('/health', fn () => response()->json([
     'app' => config('app.name'),
 ]));
 
+function validateRecipientEmailAddress(string $email, string $field = 'email'): string
+{
+    $normalizedEmail = strtolower(trim($email));
+    $gmailOnlyMessage = 'Only Gmail email addresses are accepted. Please enter a valid @gmail.com address.';
+
+    if (! filter_var($normalizedEmail, FILTER_VALIDATE_EMAIL)) {
+        throw ValidationException::withMessages([
+            $field => "Email doesn't exist. Please enter another valid email address.",
+        ]);
+    }
+
+    $domain = substr(strrchr($normalizedEmail, '@') ?: '', 1);
+    if ($domain !== 'gmail.com') {
+        throw ValidationException::withMessages([
+            $field => $gmailOnlyMessage,
+        ]);
+    }
+
+    return $normalizedEmail;
+}
+
+Route::post('/applications/validate-recipient-email', function (Request $request) {
+    $data = $request->validate([
+        'email' => ['required', 'email', 'max:120'],
+    ]);
+
+    return response()->json([
+        'message' => 'Gmail address accepted.',
+        'email' => validateRecipientEmailAddress($data['email']),
+    ]);
+});
+
 Route::post('/applications/send-applicant-id-email', function (Request $request) {
     $data = $request->validate([
         'applicant_id' => ['required', 'string', 'max:40'],
@@ -25,6 +58,7 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
         'name' => ['nullable', 'string', 'max:160'],
         'position' => ['nullable', 'string', 'max:160'],
     ]);
+    $data['email'] = validateRecipientEmailAddress($data['email']);
 
     $apiKey = config('services.resend.key');
     if (! $apiKey) {
@@ -67,15 +101,16 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
         ]);
 
     if ($response->failed()) {
+        $responseBody = $response->json() ?? $response->body();
         Log::warning('Applicant ID email failed via Resend.', [
             'applicant_id' => $data['applicant_id'],
             'email' => $data['email'],
             'status' => $response->status(),
-            'body' => $response->json() ?? $response->body(),
+            'body' => $responseBody,
         ]);
 
         return response()->json([
-            'message' => 'Unable to send applicant ID email.',
+            'message' => 'Applicant ID could not be sent. Please check that buenaventura-hris.me is verified in Resend.',
             'resend_status' => $response->status(),
         ], 502);
     }
@@ -96,6 +131,7 @@ Route::post('/applications/send-hired-credentials-email', function (Request $req
         'login_email' => ['required', 'string', 'max:120'],
         'temporary_password' => ['required', 'string', 'max:120'],
     ]);
+    $data['recipient_email'] = validateRecipientEmailAddress($data['recipient_email'], 'recipient_email');
 
     $apiKey = config('services.resend.key');
     if (! $apiKey) {
@@ -142,16 +178,17 @@ Route::post('/applications/send-hired-credentials-email', function (Request $req
         ]);
 
     if ($response->failed()) {
+        $responseBody = $response->json() ?? $response->body();
         Log::warning('Hired credentials email failed via Resend.', [
             'applicant_id' => $data['applicant_id'] ?? null,
             'employee_id' => $data['employee_id'],
             'recipient_email' => $data['recipient_email'],
             'status' => $response->status(),
-            'body' => $response->json() ?? $response->body(),
+            'body' => $responseBody,
         ]);
 
         return response()->json([
-            'message' => 'Unable to send hired credentials email.',
+            'message' => 'Employee credentials could not be sent. Please check that buenaventura-hris.me is verified in Resend.',
             'resend_status' => $response->status(),
         ], 502);
     }
