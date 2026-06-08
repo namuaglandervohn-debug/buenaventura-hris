@@ -799,33 +799,12 @@ export default function ApplyForJobPage() {
     }
   };
 
-  const validateRecipientEmail = async (email: string) => {
-    const response = await fetch('/api/applications/validate-recipient-email', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ email }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      const message =
-        body?.errors?.email?.[0] ||
-        body?.message ||
-        'Please enter a valid email address.';
-      throw new Error(message);
-    }
-  };
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validateAllSteps()) return;
     setSubmitting(true); setError(''); setEmailNotice('');
     try {
       const applicantEmail = formData.email.trim().toLowerCase();
-      await validateRecipientEmail(applicantEmail);
 
       const { count, error: countError } = await supabase.from('applicants').select('*', { count: 'exact', head: true });
       if (countError) throw countError;
