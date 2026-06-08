@@ -180,7 +180,6 @@ type EmergencyContact = {
 
 const PHONE_COUNTRY_CODE = '+63';
 const PHONE_LOCAL_LENGTH = 10;
-const GMAIL_ONLY_MESSAGE = 'Only Gmail email addresses are accepted. Please enter a valid @gmail.com address.';
 const EMPTY_CHARACTER_REFERENCE: CharacterReference = { name: '', position: '', company: '', contact: '' };
 const EMPTY_WORK_EXPERIENCE: WorkExperience = {
   companyOrganization: '',
@@ -665,7 +664,6 @@ export default function ApplyForJobPage() {
   const removeEmergencyContact = (index: number) => setEmergencyContacts((prev) => prev.length === 1 ? prev : prev.filter((_, currentIndex) => currentIndex !== index));
 
   const validateEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-  const isGmailAddress = (value: string) => value.trim().toLowerCase().endsWith('@gmail.com');
 
   const validateStep = (stepIndex: number) => {
     const errors: FieldErrors = {};
@@ -688,7 +686,6 @@ export default function ApplyForJobPage() {
       if (formData.contactNumber && formData.contactNumber.length !== PHONE_LOCAL_LENGTH) errors.contactNumber = `Contact number must be exactly ${PHONE_LOCAL_LENGTH} digits after +63.`;
       if (!formData.email.trim()) errors.email = 'Email address is required.';
       if (formData.email && !validateEmail(formData.email)) errors.email = 'Please enter a valid email address.';
-      if (formData.email && validateEmail(formData.email) && !isGmailAddress(formData.email)) errors.email = GMAIL_ONLY_MESSAGE;
       if (!formData.birthplaceCountry) errors.birthplaceCountry = 'Birthplace country is required.';
       if (formData.birthplaceCountry === 'Philippines') {
         if (!formData.birthplaceRegion) errors.birthplaceRegion = 'Birthplace region is required.';
@@ -817,7 +814,7 @@ export default function ApplyForJobPage() {
       const message =
         body?.errors?.email?.[0] ||
         body?.message ||
-        GMAIL_ONLY_MESSAGE;
+        'Please enter a valid email address.';
       throw new Error(message);
     }
   };

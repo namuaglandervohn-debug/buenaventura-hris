@@ -22,18 +22,10 @@ Route::get('/health', fn () => response()->json([
 function validateRecipientEmailAddress(string $email, string $field = 'email'): string
 {
     $normalizedEmail = strtolower(trim($email));
-    $gmailOnlyMessage = 'Only Gmail email addresses are accepted. Please enter a valid @gmail.com address.';
 
     if (! filter_var($normalizedEmail, FILTER_VALIDATE_EMAIL)) {
         throw ValidationException::withMessages([
             $field => "Email doesn't exist. Please enter another valid email address.",
-        ]);
-    }
-
-    $domain = substr(strrchr($normalizedEmail, '@') ?: '', 1);
-    if ($domain !== 'gmail.com') {
-        throw ValidationException::withMessages([
-            $field => $gmailOnlyMessage,
         ]);
     }
 
@@ -46,7 +38,7 @@ Route::post('/applications/validate-recipient-email', function (Request $request
     ]);
 
     return response()->json([
-        'message' => 'Gmail address accepted.',
+        'message' => 'Email address accepted.',
         'email' => validateRecipientEmailAddress($data['email']),
     ]);
 });
