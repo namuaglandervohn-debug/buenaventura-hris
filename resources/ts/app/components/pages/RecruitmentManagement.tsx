@@ -328,6 +328,7 @@ const APPLICANT_PROFILE_COLUMNS = `
   emergency_contact,
   resume_file_name,
   supporting_documents,
+  supporting_document_files,
   has_resume,
   has_birth_cert,
   has_tor,
@@ -451,6 +452,7 @@ const buildAddressText = (parts: any, fallback?: string) => {
 const mapApplicantRow = (app: any): Application => {
   const customRequirements = ensureArray<{ label: string; checked: boolean }>(app.custom_requirements);
   const supportingDocuments = ensureArray<string>(app.supporting_documents);
+  const supportingDocumentFiles = ensureArray<DocFile>(app.supporting_document_files);
 
   const mapped: Application = {
     id: app.applicant_id,
@@ -491,6 +493,7 @@ const mapApplicantRow = (app: any): Application => {
     resumeFileName: app.resume_file_name ?? '',
     resumeFileData: app.resume_file_data ?? '',
     supportingDocuments,
+    supportingDocumentFiles,
 
     hasResume: app.has_resume ?? false,
     hasBirthCert: app.has_birth_cert ?? false,
@@ -1460,13 +1463,22 @@ export default function RecruitmentManagement() {
           !mergedApp.resumeFileData &&
           docs.some(document => document.name === mergedApp.resumeFileName && !document.data)
       );
+      const supportingNeedsData = Boolean(
+        (mergedApp.supportingDocuments?.length ?? 0) > 0 &&
+          (mergedApp.supportingDocumentFiles?.length ?? 0) === 0
+      );
 
       let resumeFileData = mergedApp.resumeFileData;
+      let supportingDocumentFiles = mergedApp.supportingDocumentFiles;
 
-      if (resumeNeedsData) {
+      if (resumeNeedsData || supportingNeedsData) {
         try {
           const { data, error: resumeFetchError } = await withTimeout(
-            supabase.from('applicants').select('resume_file_data').eq('applicant_id', mergedApp.id).single(),
+            supabase
+              .from('applicants')
+              .select('resume_file_data, supporting_document_files')
+              .eq('applicant_id', mergedApp.id)
+              .single(),
             DOCUMENT_LOAD_TIMEOUT_MS,
             'Loading the selected document took too long. Please try again.'
           );
@@ -1474,8 +1486,11 @@ export default function RecruitmentManagement() {
           if (!resumeFetchError && data?.resume_file_data) {
             resumeFileData = data.resume_file_data;
           }
+          if (!resumeFetchError && data?.supporting_document_files) {
+            supportingDocumentFiles = ensureArray<DocFile>(data.supporting_document_files);
+          }
         } catch (resumeError) {
-          console.warn('[RecruitmentManagement] Automatic resume data fetch failed:', resumeError);
+          console.warn('[RecruitmentManagement] Automatic document data fetch failed:', resumeError);
         }
       }
 
@@ -1483,7 +1498,7 @@ export default function RecruitmentManagement() {
 
       setSelectedApp(prev => {
         if (!prev || prev.id !== app.id) return prev;
-        return { ...prev, ...mergedApp, resumeFileData };
+        return { ...prev, ...mergedApp, resumeFileData, supportingDocumentFiles };
       });
     } finally {
       if (!isMountedRef.current) return;
@@ -1540,7 +1555,11 @@ export default function RecruitmentManagement() {
       if (!loadedDoc?.data && mergedApp.resumeFileName === doc.name) {
         try {
           const { data, error: resumeFetchError } = await withTimeout(
-            supabase.from('applicants').select('resume_file_data').eq('applicant_id', mergedApp.id).single(),
+            supabase
+              .from('applicants')
+              .select('resume_file_data, supporting_document_files')
+              .eq('applicant_id', mergedApp.id)
+              .single(),
             DOCUMENT_LOAD_TIMEOUT_MS,
             'Loading the selected document took too long. Please try again.'
           );
@@ -1551,8 +1570,45 @@ export default function RecruitmentManagement() {
               prev?.id === mergedApp.id ? { ...prev, resumeFileData: data.resume_file_data } : prev
             );
           }
+          if (!resumeFetchError && data?.supporting_document_files) {
+            const supportingDocumentFiles = ensureArray<DocFile>(data.supporting_document_files);
+            const supportingDoc = supportingDocumentFiles.find(file => file.name === doc.name && file.data);
+            if (supportingDoc) {
+              loadedDoc = { name: supportingDoc.name, data: supportingDoc.data, type: supportingDoc.type || doc.type || getFileTypeFromName(supportingDoc.name) };
+              setSelectedApp(prev =>
+                prev?.id === mergedApp.id ? { ...prev, supportingDocumentFiles } : prev
+              );
+            }
+          }
         } catch (resumeError) {
-          console.warn('[RecruitmentManagement] Resume data fetch failed:', resumeError);
+          console.warn('[RecruitmentManagement] Document data fetch failed:', resumeError);
+        }
+      }
+
+      if (!loadedDoc?.data && mergedApp.resumeFileName !== doc.name) {
+        try {
+          const { data, error: supportingFetchError } = await withTimeout(
+            supabase
+              .from('applicants')
+              .select('supporting_document_files')
+              .eq('applicant_id', mergedApp.id)
+              .single(),
+            DOCUMENT_LOAD_TIMEOUT_MS,
+            'Loading the selected document took too long. Please try again.'
+          );
+
+          if (!supportingFetchError && data?.supporting_document_files) {
+            const supportingDocumentFiles = ensureArray<DocFile>(data.supporting_document_files);
+            const supportingDoc = supportingDocumentFiles.find(file => file.name === doc.name && file.data);
+            if (supportingDoc) {
+              loadedDoc = { name: supportingDoc.name, data: supportingDoc.data, type: supportingDoc.type || doc.type || getFileTypeFromName(supportingDoc.name) };
+              setSelectedApp(prev =>
+                prev?.id === mergedApp.id ? { ...prev, supportingDocumentFiles } : prev
+              );
+            }
+          }
+        } catch (supportingError) {
+          console.warn('[RecruitmentManagement] Supporting document data fetch failed:', supportingError);
         }
       }
 
