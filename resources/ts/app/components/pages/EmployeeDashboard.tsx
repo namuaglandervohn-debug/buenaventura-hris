@@ -229,8 +229,8 @@ export default function EmployeeDashboard() {
       bg: '#fff7e0',
     },
     {
-      title: 'Latest Net Pay',
-      value: loading ? '…' : (latestPayslip ? formatPeso(latestPayslip.netPay) : '—'),
+      title: 'Latest Payslip',
+      value: loading ? '...' : (latestPayslip ? 'Available' : 'No payslip'),
       icon: <Payments />,
       helper: latestPayslip ? 'Most recent released/encoded payslip' : 'No payslip available yet',
       color: '#6c3a8f',

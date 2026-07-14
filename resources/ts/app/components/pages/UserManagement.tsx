@@ -53,6 +53,15 @@ const ROLES: { value: UserRole; label: string }[] = [
   { value: 'accounting', label: 'Accounting & Finance' },
 ];
 
+const normalizeUserRole = (role?: string | null): UserRole => {
+  const normalized = String(role ?? '').trim().toLowerCase();
+  if (normalized === 'hr_admin' || normalized.includes('hr')) return 'hr';
+  if (normalized === 'general_manager' || normalized === 'general manager' || normalized === 'gm') return 'gm';
+  if (normalized === 'accounting_finance' || normalized.includes('accounting')) return 'accounting';
+  if (normalized.includes('supervisor')) return 'supervisor';
+  return 'employee';
+};
+
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
   cardBg: 'rgba(255, 255, 255, 0.92)',
@@ -104,16 +113,17 @@ const softTextFieldSx = {
   '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: GREEN_UI.text },
 };
 
-const roleChipSx = (role: UserRole) => {
+const roleChipSx = (role: UserRole | string) => {
+  const normalizedRole = normalizeUserRole(role);
   const styles: Record<UserRole, { bg: string; color: string; border: string }> = {
-    hr: { bg: '#e5f8e9', color: '#1f7a46', border: '#a9dfb6' },
-    employee: { bg: '#f4f7f3', color: '#5f6e63', border: '#dce8da' },
-    supervisor: { bg: '#eaf6ff', color: '#24658f', border: '#b9ddf4' },
-    gm: { bg: '#fff7e0', color: '#9b6b00', border: '#f5d786' },
-    accounting: { bg: '#eef6ff', color: '#345d88', border: '#c5dff5' },
+    hr: { bg: '#e5f8e9', color: '#1f7a46', border: '#8ed7a2' },
+    employee: { bg: '#f4f1ff', color: '#5b3aa4', border: '#d7c8ff' },
+    supervisor: { bg: '#eaf6ff', color: '#1d6f9c', border: '#9bd2f1' },
+    gm: { bg: '#fff7e0', color: '#9b6b00', border: '#efc45f' },
+    accounting: { bg: '#fff0f5', color: '#a03464', border: '#f2b7cc' },
   };
 
-  const selected = styles[role] ?? styles.employee;
+  const selected = styles[normalizedRole] ?? styles.employee;
 
   return {
     bgcolor: selected.bg,
@@ -276,7 +286,7 @@ export default function UserManagement() {
   if (!form.name || !form.email || !form.password) {
     setSnackbar({
       open: true,
-      message: "Name, email/username, and password are required.",
+      message: "Name, email, and initial password are required.",
       severity: "error",
     });
     return;
@@ -285,54 +295,42 @@ export default function UserManagement() {
   setSaving(true);
 
   try {
-    const { count: userCount } = await supabase
-      .from("user_accounts")
-      .select("*", { count: "exact", head: true });
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Your admin session has expired. Please sign in again.");
 
-    const userId = `USR-2026-${String((userCount ?? 0) + 1).padStart(4, "0")}`;
-
-    const { data: userData, error: userError } = await supabase
-      .from("user_accounts")
-      .insert({
-        user_id: userId,
-        employee_id: form.employeeId,
-        full_name: form.name,
+    const response = await fetch('/api/admin/user-accounts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        name: form.name,
         email: form.email,
         password: form.password,
         role: form.role,
+        employee_id: form.employeeId,
         outlet: form.outlet,
-        is_active: true,
-      })
-      .select()
-      .single();
+      }),
+    });
 
-    if (userError) throw userError;
-
-    if (form.role === "employee") {
-      const nameParts = form.name.trim().split(" ");
-      const firstName = nameParts[0] ?? "";
-      const lastName = nameParts.slice(1).join(" ") || firstName;
-
-      const { error: employeeError } = await supabase
-        .from("employees")
-        .insert({
-          employee_id: form.employeeId,
-          first_name: firstName,
-          last_name: lastName,
-          email: form.email,
-          outlet: form.outlet,
-          status: "Active",
-          hire_date: new Date().toISOString().split("T")[0],
-        });
-
-      if (employeeError) throw employeeError;
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const messages = result?.errors
+        ? Object.values(result.errors).flat().join(' ')
+        : result?.message;
+      throw new Error(messages || 'Account could not be created.');
     }
+
+    const userData = result.user;
 
     const newUser: UserAccount = {
       id: userData.user_id,
       name: userData.full_name,
       email: userData.email,
-      password: userData.password,
+      password: "",
       role: userData.role,
       employeeId: userData.employee_id,
       applicantId: userData.applicant_id,
@@ -348,7 +346,7 @@ export default function UserManagement() {
 
     setSnackbar({
       open: true,
-      message: `✅ Account created with Employee ID ${form.employeeId}`,
+      message: `Account created and linked to Supabase Auth${form.employeeId ? ` with Employee ID ${form.employeeId}` : ''}.`,
       severity: "success",
     });
   } catch (e: any) {
@@ -362,7 +360,7 @@ export default function UserManagement() {
   }
 };
 
-  // Edit — also handles optional password reset in one call
+  // Edit account profile. Passwords are managed by Supabase Auth, not user_accounts.
   const handleEdit = async () => {
   if (!selectedUser) return;
 
@@ -382,7 +380,7 @@ export default function UserManagement() {
     };
 
     if (newPwd.trim()) {
-      updateData.password = newPwd.trim();
+      throw new Error("Password resets must be completed in Supabase Auth or through a secure admin backend.");
     }
 
     let result = await supabase
@@ -430,7 +428,7 @@ export default function UserManagement() {
     setSnackbar({
       open: true,
       message: newPwd.trim()
-        ? "✅ Account updated & password reset!"
+        ? "Account updated. Manage password changes in Supabase Auth."
         : "✅ Account updated!",
       severity: "success",
     });
@@ -541,7 +539,7 @@ export default function UserManagement() {
           u.employeeId,
           u.applicantId,
           u.outlet,
-          ROLES.find(r => r.value === u.role)?.label,
+          ROLES.find(r => r.value === normalizeUserRole(u.role))?.label,
         ].some(value => String(value ?? '').toLowerCase().includes(searchQuery))
       )
     : users;
@@ -954,7 +952,7 @@ export default function UserManagement() {
 
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       <Chip
-                        label={ROLES.find(r => r.value === u.role)?.label ?? u.role}
+                        label={ROLES.find(r => r.value === normalizeUserRole(u.role))?.label ?? u.role}
                         size="small"
                         variant="outlined"
                         sx={roleChipSx(u.role)}
@@ -1172,7 +1170,7 @@ export default function UserManagement() {
               <TextField
                 fullWidth
                 required
-                label="Initial Password"
+                label="Supabase Auth Password"
                 type={showPwd ? 'text' : 'password'}
                 value={form.password}
                 onChange={e => setForm({ ...form, password: e.target.value })}
@@ -1342,8 +1340,8 @@ export default function UserManagement() {
             <Grid size={12}>
               <TextField
                 fullWidth
-                label="New Password"
-                placeholder="Leave blank to keep current password"
+                label="Supabase Auth Password"
+                placeholder="Manage password changes in Supabase Auth"
                 type={showEditPwd ? 'text' : 'password'}
                 value={newPwd}
                 onChange={e => setNewPwd(e.target.value)}

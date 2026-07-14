@@ -10,6 +10,7 @@ import {
   BadgeOutlined,
   CalendarMonth,
   CheckCircle,
+  Download,
   EventNote,
   Paid,
   Payments,
@@ -65,6 +66,8 @@ interface Payslip {
   breakages?: string;
   amesco?: string;
   pagibigLoan?: string;
+  uploadedPayslipName?: string;
+  uploadedPayslipPath?: string;
 }
 
 interface EmployeeContext {
@@ -172,6 +175,8 @@ const mapItemToPayslip = (item: any, summariesById: Map<string, any>, displayId?
     breakages: details.breakages ?? '',
     amesco: details.amesco ?? '',
     pagibigLoan: details.pagibigLoan ?? '',
+    uploadedPayslipName: details.uploadedPayslipName ?? '',
+    uploadedPayslipPath: details.uploadedPayslipPath ?? '',
   };
 };
 
@@ -516,6 +521,22 @@ export default function EmployeePayslips() {
       </body></html>`);
     win.document.close();
     win.print();
+  };
+
+
+  const openUploadedPayslip = async (slip: Payslip) => {
+    if (!slip.uploadedPayslipPath) return;
+
+    const { data, error } = await supabase.storage
+      .from('payslips')
+      .createSignedUrl(slip.uploadedPayslipPath, 60 * 5);
+
+    if (error || !data?.signedUrl) {
+      setSnackbar({ open: true, message: `Could not open uploaded payslip: ${error?.message ?? 'Missing file URL'}`, severity: 'error' });
+      return;
+    }
+
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
   };
 
   const parseAmt = (v: string) => parseFloat((v ?? '').replace(/[₱,]/g, '')) || 0;
@@ -903,6 +924,23 @@ export default function EmployeePayslips() {
                         >
                           Print
                         </Button>
+                        {p.uploadedPayslipPath && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Download />}
+                            onClick={() => openUploadedPayslip(p)}
+                            sx={{
+                              ...pillButtonSx,
+                              borderColor: GREEN_UI.borderStrong,
+                              color: GREEN_UI.greenDark,
+                              bgcolor: '#ffffff',
+                              '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+                            }}
+                          >
+                            File
+                          </Button>
+                        )}
                       </Box>
                     </TableCell>
                   </TableRow>
@@ -1121,6 +1159,21 @@ export default function EmployeePayslips() {
           <Button onClick={() => setViewDialog(false)} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>
             Close
           </Button>
+          {selected?.uploadedPayslipPath && (
+            <Button
+              variant="outlined"
+              startIcon={<Download />}
+              onClick={() => openUploadedPayslip(selected)}
+              sx={{
+                ...pillButtonSx,
+                borderColor: GREEN_UI.borderStrong,
+                color: GREEN_UI.greenDark,
+                '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+              }}
+            >
+              Open Uploaded File
+            </Button>
+          )}
           {selected && selected.status === 'Released' && (
             <Button
               variant="contained"

@@ -33,6 +33,8 @@ interface Stats {
   supervisorApprovedRequests: number;
   attendanceIssues: number;
   payrollForReview: number;
+  lastPayrollGenerated: string | null;
+  onDutyOrOnCall: number;
   topEvaluee: string | null;
   topScore: number | null;
 }
@@ -47,6 +49,8 @@ const DEFAULT_STATS: Stats = {
   supervisorApprovedRequests: 0,
   attendanceIssues: 0,
   payrollForReview: 0,
+  lastPayrollGenerated: null,
+  onDutyOrOnCall: 0,
   topEvaluee: null,
   topScore: null,
 };
@@ -199,6 +203,51 @@ const fetchPayrollForReviewCount = async (): Promise<number> => {
   return rows.filter((row) => isPayrollForReview(row.status)).length;
 };
 
+const fetchLastPayrollGenerated = async (): Promise<string | null> => {
+  const rows = await fetchRows(
+    "payroll_summaries",
+    "id, payroll_id, cutoff_label, period_start, period_end, created_at, updated_at",
+    { column: "created_at", ascending: false },
+  );
+  const latest = rows[0];
+  if (!latest) return null;
+
+  const label = String(latest.cutoff_label ?? "").trim();
+  if (label) return label;
+
+  const start = String(latest.period_start ?? "").slice(0, 10);
+  const end = String(latest.period_end ?? "").slice(0, 10);
+  return [start, end].filter(Boolean).join(" to ") || String(latest.payroll_id ?? "");
+};
+
+const fetchOnDutyOrOnCallCount = async (): Promise<number> => {
+  const today = new Date().toISOString().slice(0, 10);
+  const dayKey = new Date(`${today}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+  const [attendanceRows, scheduleRows] = await Promise.all([
+    fetchRows("attendance_logs", "id, employee_id, attendance_date, is_absent, remarks"),
+    fetchRows("schedule", `schedule_id, employee_id, status, ${dayKey}`),
+  ]);
+  const employeeIds = new Set<string>();
+
+  attendanceRows
+    .filter(row => String(row.attendance_date ?? "").slice(0, 10) === today)
+    .filter(row => !toBoolean(row.is_absent) && !normalizeText(row.remarks).includes("leave"))
+    .forEach(row => {
+      const employeeId = String(row.employee_id ?? "").trim();
+      if (employeeId) employeeIds.add(employeeId);
+    });
+
+  scheduleRows
+    .filter(row => ["published", "active", "on call", "on-call"].includes(normalizeText(row.status)))
+    .filter(row => toBoolean(row[dayKey]) || normalizeText(row[dayKey]).includes("on call"))
+    .forEach(row => {
+      const employeeId = String(row.employee_id ?? "").trim();
+      if (employeeId) employeeIds.add(employeeId);
+    });
+
+  return employeeIds.size;
+};
+
 const fetchTopPerformer = async (): Promise<
   Pick<Stats, "topEvaluee" | "topScore">
 > => {
@@ -296,6 +345,8 @@ const resolveLiveDashboardStats = async (): Promise<{
     supervisorApprovedRequests,
     attendanceIssues,
     payrollForReview,
+    lastPayrollGenerated,
+    onDutyOrOnCall,
     topPerformer,
   ] = await Promise.all([
     safe("Active Employees", 0, fetchActiveEmployeesCount),
@@ -305,6 +356,8 @@ const resolveLiveDashboardStats = async (): Promise<{
     safe("Pending HR Validation", 0, fetchPendingHrValidationCount),
     safe("Attendance Issues", 0, fetchAttendanceIssuesCount),
     safe("Payroll For Review", 0, fetchPayrollForReviewCount),
+    safe("Last Payroll Generated", null, fetchLastPayrollGenerated),
+    safe("On Duty / On-Call", 0, fetchOnDutyOrOnCallCount),
     safe(
       "Top Performer",
       { topEvaluee: null, topScore: null },
@@ -321,6 +374,8 @@ const resolveLiveDashboardStats = async (): Promise<{
       supervisorApprovedRequests,
       attendanceIssues,
       payrollForReview,
+      lastPayrollGenerated,
+      onDutyOrOnCall,
       topEvaluee: topPerformer.topEvaluee,
       topScore: topPerformer.topScore,
     },
@@ -519,6 +574,14 @@ export default function HRDashboard() {
         helper: "Requests waiting for HR action",
       },
       {
+        title: "On Duty / On-Call",
+        value: loading ? "..." : String(stats.onDutyOrOnCall),
+        icon: <EventAvailable />,
+        color: "#2B9C95",
+        softColor: "#DFF7F5",
+        helper: "Employees scheduled or logged today",
+      },
+      {
         title: "Attendance Issues",
         value: loading ? "…" : String(stats.attendanceIssues),
         icon: <WarningAmber />,
@@ -527,12 +590,12 @@ export default function HRDashboard() {
         helper: "Logs that need checking",
       },
       {
-        title: "Payroll For Review",
-        value: loading ? "…" : String(stats.payrollForReview),
+        title: "Last Payroll Generated",
+        value: loading ? "..." : (stats.lastPayrollGenerated ?? "No payroll yet"),
         icon: <AccountBalance />,
         color: "#2E7BCF",
         softColor: "#E7F0FF",
-        helper: "Payroll summaries to verify",
+        helper: `${stats.payrollForReview} payroll summary/s for review`,
       },
       {
         title: "Top Performer",

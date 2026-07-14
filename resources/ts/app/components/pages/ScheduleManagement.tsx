@@ -4,6 +4,7 @@ import {
   TableContainer, TableHead, TableRow, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, MenuItem, Chip, Grid,
   CircularProgress, Alert, Tooltip, InputAdornment,
+  Checkbox,
   Autocomplete,
 } from '@mui/material';
 import {
@@ -20,6 +21,7 @@ import {
   InsertDriveFile,
   ManageSearch,
   PersonOutline,
+  PlaylistAddCheck,
   Storefront,
   Sync,
   TaskAlt,
@@ -46,6 +48,15 @@ interface Schedule {
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_NAMES: Record<string, string> = {
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+};
 
 const EMPTY = {
   employeeId: '',
@@ -79,6 +90,14 @@ const SHIFT_PRESETS = [
 ];
 
 const BREAK_TIME_OPTIONS = ['30 minutes', '1 hour', '1 hour 30 minutes', '2 hours'];
+const ASSIGNED_WORK_AREAS = ['Maria Clara Resort', 'Maria Clara Restaurant', 'Café Buenaventura'];
+const normalizeWorkArea = (value?: string | null) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'buenaventura café' || normalized === 'buenaventura cafe' || normalized === 'cafe buenaventura') {
+    return 'café buenaventura';
+  }
+  return normalized;
+};
 
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
@@ -202,9 +221,13 @@ export default function ScheduleManagement() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
   const [filterOutlet, setFilterOutlet] = useState('all');
   const [search, setSearch] = useState('');
+  const [selectedScheduleIds, setSelectedScheduleIds] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState<Schedule['status']>('Published');
   const [editDialog, setEditDialog] = useState(false);
   const [editRecord, setEditRecord] = useState<Schedule | null>(null);
   const [editForm, setEditForm] = useState(EMPTY);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
+  const [applicableWorkdays, setApplicableWorkdays] = useState<string[]>(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']);
 
   // Employee list with position + outlet for auto-fill
   const [employeeList, setEmployeeList] = useState<{
@@ -377,59 +400,53 @@ export default function ScheduleManagement() {
   const hasEmployeeOutlet = (employeeId: string) =>
     Boolean(getEmployeeById(employeeId)?.outlet);
 
+  const applySelectedWorkdays = () => {
+    const shift = form.timeIn && form.timeOut ? `${form.timeIn} - ${form.timeOut}` : '';
+    if (!shift) {
+      setSnackbar({ open: true, message: 'Select a schedule time before applying workdays.', severity: 'error' });
+      return;
+    }
+
+    setForm(prev => {
+      const next = { ...prev };
+      DAYS.forEach(day => {
+        (next as any)[day] = applicableWorkdays.includes(day) ? shift : 'Off';
+      });
+      return next;
+    });
+  };
+
   const handleSaveDraft = async () => {
   try {
     setSaving(true);
-    const selectedEmployee = getEmployeeById(form.employeeId);
-    const employeePosition = selectedEmployee?.position || form.position || "";
-    const employeeOutlet = selectedEmployee?.outlet || form.outlet || "";
+    const employeeIds = selectedEmployeeIds.length > 0 ? selectedEmployeeIds : [form.employeeId].filter(Boolean);
+    if (employeeIds.length === 0) throw new Error('Please choose at least one employee.');
 
-    const year = new Date().getFullYear();
+    const scheduleIds = await nextScheduleIds(employeeIds.length);
+    const payload = employeeIds.map((employeeId, index) => {
+      const selectedEmployee = getEmployeeById(employeeId);
+      const employeePosition = selectedEmployee?.position || form.position || "";
+      const employeeOutlet = selectedEmployee?.outlet || form.outlet || "";
 
-const { data: existingSchedules, error: scheduleIdError } = await supabase
-  .from("schedule")
-  .select("schedule_id")
-  .like("schedule_id", `SCH-${year}-%`);
-
-if (scheduleIdError) throw scheduleIdError;
-
-const numbers = (existingSchedules ?? [])
-  .map((s: any) => {
-    const match = String(s.schedule_id).match(/SCH-\d{4}-(\d+)$/);
-    return match ? Number(match[1]) : 0;
-  })
-  .filter((n) => n > 0);
-
-const nextNumber =
-  numbers.length > 0
-    ? Math.max(...numbers) + 1
-    : 1;
-
-const scheduleId =
-  `SCH-${year}-${String(nextNumber).padStart(4, "0")}`;
-
-    const payload = {
-  schedule_id: scheduleId,
-
-  employee_id: form.employeeId ?? "",
-  position: employeePosition,
-  outlet: employeeOutlet,
-  week: form.week ?? "",
-
-  time_in: form.timeIn || null,
-  time_out: form.timeOut || null,
-  break_time: form.breakTime ?? "",
-
-  monday: form.monday ?? "",
-  tuesday: form.tuesday ?? "",
-  wednesday: form.wednesday ?? "",
-  thursday: form.thursday ?? "",
-  friday: form.friday ?? "",
-  saturday: form.saturday ?? "",
-  sunday: form.sunday ?? "",
-
-  status: "Draft",
-};
+      return {
+        schedule_id: scheduleIds[index],
+        employee_id: employeeId,
+        position: employeePosition,
+        outlet: employeeOutlet,
+        week: form.week ?? "",
+        time_in: form.timeIn || null,
+        time_out: form.timeOut || null,
+        break_time: form.breakTime ?? "",
+        monday: form.monday ?? "",
+        tuesday: form.tuesday ?? "",
+        wednesday: form.wednesday ?? "",
+        thursday: form.thursday ?? "",
+        friday: form.friday ?? "",
+        saturday: form.saturday ?? "",
+        sunday: form.sunday ?? "",
+        status: "Draft",
+      };
+    });
 
     const { error } = await supabase
       .from("schedule")
@@ -444,6 +461,7 @@ const scheduleId =
     });
 
     setOpenDialog(false);
+    setSelectedEmployeeIds([]);
 
     fetchSchedules();
   } catch (e: any) {
@@ -679,7 +697,7 @@ const scheduleId =
       }
     }
 
-    if (filterOutlet !== "all" && s.outlet !== filterOutlet) return false;
+    if (filterOutlet !== "all" && normalizeWorkArea(s.outlet) !== normalizeWorkArea(filterOutlet)) return false;
 
     const query = search.trim().toLowerCase();
     if (!query) return true;
@@ -702,6 +720,82 @@ const scheduleId =
       s.sunday,
     ].some(value => String(value ?? '').toLowerCase().includes(query));
   });
+
+  const filteredIds = filtered.map(schedule => schedule.id);
+  const selectedVisibleIds = selectedScheduleIds.filter(id => filteredIds.includes(id));
+  const allVisibleSelected = filteredIds.length > 0 && selectedVisibleIds.length === filteredIds.length;
+  const partiallyVisibleSelected = selectedVisibleIds.length > 0 && !allVisibleSelected;
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelectedScheduleIds(prev => {
+      const hiddenSelections = prev.filter(id => !filteredIds.includes(id));
+      return checked ? [...hiddenSelections, ...filteredIds] : hiddenSelections;
+    });
+  };
+
+  const toggleScheduleSelection = (id: string, checked: boolean) => {
+    setSelectedScheduleIds(prev =>
+      checked ? Array.from(new Set([...prev, id])) : prev.filter(selectedId => selectedId !== id)
+    );
+  };
+
+  const applyBulkStatusUpdate = async () => {
+    if (selectedScheduleIds.length === 0) {
+      setSnackbar({ open: true, message: 'Select at least one schedule to update.', severity: 'error' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const updatePayload: Record<string, any> = { status: bulkStatus };
+      if (bulkStatus === 'Confirmed') {
+        updatePayload.confirmed_by = currentUserName;
+        updatePayload.confirmed_at = new Date().toISOString();
+      }
+      if (bulkStatus === 'Declined') {
+        updatePayload.declined_by = currentUserName;
+        updatePayload.declined_at = new Date().toISOString();
+      }
+
+      const { error } = await supabase
+        .from('schedule')
+        .update(updatePayload)
+        .in('schedule_id', selectedScheduleIds);
+
+      if (error) throw error;
+
+      const selectedRecords = schedules.filter(schedule => selectedScheduleIds.includes(schedule.id));
+      if (bulkStatus === 'Published') {
+        await Promise.all(selectedRecords.map(schedule =>
+          pushNotification(
+            schedule.employeeId,
+            'New Schedule Published',
+            `Your schedule for ${schedule.week} has been published.`,
+            'schedule'
+          )
+        ));
+      }
+
+      setSchedules(prev => prev.map(schedule =>
+        selectedScheduleIds.includes(schedule.id)
+          ? {
+              ...schedule,
+              status: bulkStatus,
+              confirmedBy: bulkStatus === 'Confirmed' ? currentUserName : schedule.confirmedBy,
+              confirmedAt: bulkStatus === 'Confirmed' ? new Date().toISOString() : schedule.confirmedAt,
+              declinedBy: bulkStatus === 'Declined' ? currentUserName : schedule.declinedBy,
+              declinedAt: bulkStatus === 'Declined' ? new Date().toISOString() : schedule.declinedAt,
+            }
+          : schedule
+      ));
+      setSelectedScheduleIds([]);
+      setSnackbar({ open: true, message: `Updated ${selectedRecords.length} schedule(s) to ${bulkStatus}.`, severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({ open: true, message: `Bulk status update failed: ${e.message ?? e}`, severity: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const nextScheduleIds = async (count: number) => {
     const year = new Date().getFullYear();
@@ -1102,7 +1196,7 @@ const scheduleId =
               sx={softTextFieldSx}
             >
               <MenuItem key="all" value="all">All Outlets</MenuItem>
-              {OUTLETS.map(o => <MenuItem key={o} value={o}>{o}</MenuItem>)}
+              {ASSIGNED_WORK_AREAS.map(o => <MenuItem key={o} value={o}>{o}</MenuItem>)}
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 3 }}>
@@ -1127,6 +1221,63 @@ const scheduleId =
             </Button>
           </Grid>
         </Grid>
+
+        {canPublish && (
+          <Grid container spacing={1.5} alignItems="center" sx={{ mt: 1.5 }}>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <Button
+                fullWidth
+                variant="outlined"
+                startIcon={<PlaylistAddCheck />}
+                onClick={() => toggleSelectAllVisible(!allVisibleSelected)}
+                disabled={filtered.length === 0}
+                sx={{
+                  ...pillButtonSx,
+                  height: 40,
+                  borderColor: GREEN_UI.borderStrong,
+                  color: GREEN_UI.greenDark,
+                  bgcolor: '#ffffff',
+                  '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+                }}
+              >
+                {allVisibleSelected ? 'Clear Visible Selection' : `Select All Visible (${filtered.length})`}
+              </Button>
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <TextField
+                fullWidth
+                select
+                label="Bulk Status"
+                value={bulkStatus}
+                onChange={e => setBulkStatus(e.target.value as Schedule['status'])}
+                InputLabelProps={{ shrink: true }}
+                size="small"
+                sx={softTextFieldSx}
+              >
+                {(['Draft', 'Published', 'Confirmed', 'Declined'] as Schedule['status'][]).map(status => (
+                  <MenuItem key={status} value={status}>{status}</MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <Button
+                fullWidth
+                variant="contained"
+                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <DoneAll />}
+                onClick={applyBulkStatusUpdate}
+                disabled={saving || selectedScheduleIds.length === 0}
+                sx={{
+                  ...pillButtonSx,
+                  height: 40,
+                  bgcolor: GREEN_UI.green,
+                  '&:hover': { bgcolor: GREEN_UI.greenDark },
+                }}
+              >
+                Apply to {selectedScheduleIds.length} Selected
+              </Button>
+            </Grid>
+          </Grid>
+        )}
       </Paper>
 
       <TableContainer
@@ -1160,6 +1311,17 @@ const scheduleId =
                   },
                 }}
               >
+                {canPublish && (
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      size="small"
+                      checked={allVisibleSelected}
+                      indeterminate={partiallyVisibleSelected}
+                      onChange={event => toggleSelectAllVisible(event.target.checked)}
+                      inputProps={{ 'aria-label': 'Select all visible schedules' }}
+                    />
+                  </TableCell>
+                )}
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>ID</TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>Employee</TableCell>
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>Position</TableCell>
@@ -1174,7 +1336,7 @@ const scheduleId =
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={15} align="center" sx={{ py: 7 }}>
+                  <TableCell colSpan={canPublish ? 16 : 15} align="center" sx={{ py: 7 }}>
                     <Box sx={{ maxWidth: 380, mx: 'auto' }}>
                       <Box
                         sx={{
@@ -1212,6 +1374,16 @@ const scheduleId =
                     '& td': { py: 1.55, color: GREEN_UI.text },
                   }}
                 >
+                  {canPublish && (
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        size="small"
+                        checked={selectedScheduleIds.includes(s.id)}
+                        onChange={event => toggleScheduleSelection(s.id, event.target.checked)}
+                        inputProps={{ 'aria-label': `Select schedule ${s.id}` }}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>
                     <Chip
                       icon={<AssignmentTurnedIn sx={{ fontSize: '0.85rem !important' }} />}
@@ -1431,31 +1603,36 @@ const scheduleId =
             </Box>
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 4 }}>
-                <TextField
-                  fullWidth
-                  select
-                  label="Select Employee"
-                  value={form.employeeId || ""}
-                  required
-                  size="small"
-                  sx={softTextFieldSx}
-                  onChange={(e) => {
-                    const selected = employeeList.find(emp => emp.employeeId === e.target.value);
+                <Autocomplete
+                  multiple
+                  options={employeeList}
+                  getOptionLabel={(option) => option.name}
+                  value={employeeList.filter(emp => selectedEmployeeIds.includes(emp.employeeId))}
+                  onChange={(_, selected) => {
+                    const ids = selected.map(emp => emp.employeeId);
+                    const first = selected[0];
+                    setSelectedEmployeeIds(ids);
                     setForm(prev => ({
                       ...prev,
-                      employeeId: selected?.employeeId ?? "",
-                      employee: selected?.name ?? "",
-                      position: selected?.position ?? "",
-                      outlet: selected?.outlet ?? "",
+                      employeeId: first?.employeeId ?? "",
+                      employee: first?.name ?? "",
+                      position: first?.position ?? "",
+                      outlet: first?.outlet ?? "",
                     }));
                   }}
-                  InputLabelProps={{ shrink: true }}
-                >
-                  <MenuItem key="emp-empty" value="">Select employee…</MenuItem>
-                  {employeeList.map(emp => (
-                    <MenuItem key={emp.employeeId} value={emp.employeeId}>{emp.name}</MenuItem>
-                  ))}
-                </TextField>
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      fullWidth
+                      required
+                      label="Choose Employees"
+                      placeholder="Select employees"
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
+                      sx={softTextFieldSx}
+                    />
+                  )}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
                 <TextField
@@ -1480,7 +1657,7 @@ const scheduleId =
                   value={form.outlet}
                   size="small"
                   sx={softTextFieldSx}
-                  disabled={hasEmployeeOutlet(form.employeeId)}
+                  disabled={selectedEmployeeIds.length === 1 && hasEmployeeOutlet(form.employeeId)}
                   onChange={e => setForm(prev => ({ ...prev, outlet: e.target.value }))}
                   InputLabelProps={{ shrink: true }}
                 >
@@ -1549,6 +1726,61 @@ const scheduleId =
               <AccessTime sx={{ color: GREEN_UI.greenDark }} />
               <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>Daily Schedule Assignment</Typography>
             </Box>
+            <Grid container spacing={1.5} sx={{ mb: 1.5 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <TextField
+                  fullWidth
+                  label="Schedule Time In"
+                  type="time"
+                  value={form.timeIn}
+                  onChange={e => setForm({ ...form, timeIn: e.target.value })}
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <TextField
+                  fullWidth
+                  label="Schedule Time Out"
+                  type="time"
+                  value={form.timeOut}
+                  onChange={e => setForm({ ...form, timeOut: e.target.value })}
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700, display: 'block', mb: 0.75 }}>
+                  Applicable Workdays
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+                  {DAYS.map(day => (
+                    <Chip
+                      key={day}
+                      label={DAY_NAMES[day]}
+                      size="small"
+                      clickable
+                      color={applicableWorkdays.includes(day) ? 'success' : 'default'}
+                      variant={applicableWorkdays.includes(day) ? 'filled' : 'outlined'}
+                      onClick={() => setApplicableWorkdays(prev =>
+                        prev.includes(day) ? prev.filter(value => value !== day) : [...prev, day]
+                      )}
+                      sx={{ fontWeight: 700 }}
+                    />
+                  ))}
+                  <Chip
+                    label="Apply"
+                    size="small"
+                    clickable
+                    color="primary"
+                    onClick={applySelectedWorkdays}
+                    sx={{ fontWeight: 700 }}
+                  />
+                </Box>
+              </Grid>
+            </Grid>
             <Grid container spacing={1.5}>
               {DAYS.map(day => (
                 <Grid key={day} size={{ xs: 12, sm: 6, md: 3 }}>

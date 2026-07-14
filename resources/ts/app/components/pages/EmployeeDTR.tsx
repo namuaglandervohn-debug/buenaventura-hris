@@ -24,6 +24,7 @@ import {
 } from "@mui/icons-material";
 import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../../context/AuthContext";
+import { COMPANY } from "../../lib/constants";
 
 interface AttendanceLogRow {
   log_id: string;
@@ -34,8 +35,15 @@ interface AttendanceLogRow {
   raw_time_in?: string | null;
   raw_time_out?: string | null;
   total_hours?: number | string | null;
+  undertime_minutes?: number | null;
   overtime_minutes?: number | null;
+  is_late?: boolean | null;
+  is_undertime?: boolean | null;
   is_overtime?: boolean | null;
+  is_absent?: boolean | null;
+  is_incomplete?: boolean | null;
+  remarks?: string | null;
+  validation_status?: string | null;
 }
 
 interface DTRRecord {
@@ -48,7 +56,20 @@ interface DTRRecord {
   pm_departure: string;
   overtime_arrival: string;
   overtime_departure: string;
+  undertime: string;
   total_hours: string;
+  remarks: string;
+}
+
+const REQUIRED_DAILY_HOURS = 8;
+
+interface EmployeeProfile {
+  employee_id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  position?: string | null;
+  department?: string | null;
+  outlet?: string | null;
 }
 
 function parseClockToMinutes(value: string): number | null {
@@ -84,10 +105,29 @@ function formatDbTime(value: unknown) {
   return minutes === null ? String(value) : formatMinutesAsTime(minutes);
 }
 
+function buildDtrRemarks(row: AttendanceLogRow, timeIn: string, timeOut: string) {
+  if (row.remarks) return String(row.remarks);
+  if (row.is_absent) return "Absent";
+
+  const issues: string[] = [];
+  const undertime = Number(row.undertime_minutes ?? 0);
+  const totalHours = Number(row.total_hours ?? 0);
+
+  if (!timeIn) issues.push("Missing time-in");
+  if (!timeOut) issues.push("Missing time-out");
+  if (row.is_late) issues.push("Late");
+  if (undertime > 0 || row.is_undertime) issues.push(`Undertime ${undertime} min`);
+  if (totalHours > 0 && totalHours < REQUIRED_DAILY_HOURS) issues.push("Incomplete required hours");
+  if (row.is_incomplete && issues.length === 0) issues.push("Incomplete punches");
+
+  return issues.length > 0 ? issues.join("; ") : "";
+}
+
 function mapAttendanceLogToDTR(row: AttendanceLogRow): DTRRecord {
   const timeIn = String(row.raw_time_in ?? "").trim() || formatDbTime(row.time_in);
   const timeOut = String(row.raw_time_out ?? "").trim() || formatDbTime(row.time_out);
   const overtimeMinutes = Number(row.overtime_minutes ?? 0);
+  const undertimeMinutes = Number(row.undertime_minutes ?? 0);
 
   return {
     id: row.log_id,
@@ -100,7 +140,9 @@ function mapAttendanceLogToDTR(row: AttendanceLogRow): DTRRecord {
     overtime_arrival: overtimeMinutes > 0 || row.is_overtime ? timeOut : "",
     overtime_departure:
       overtimeMinutes > 0 ? `${overtimeMinutes} min` : row.is_overtime ? "Yes" : "",
+    undertime: undertimeMinutes > 0 ? `${undertimeMinutes} min` : row.is_undertime ? "Yes" : "",
     total_hours: String(row.total_hours ?? ""),
+    remarks: buildDtrRemarks(row, timeIn, timeOut),
   };
 }
 
@@ -197,6 +239,7 @@ export default function EmployeeDTR() {
   const { user } = useAuth();
 
   const [records, setRecords] = useState<DTRRecord[]>([]);
+  const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   const now = new Date();
@@ -222,15 +265,24 @@ export default function EmployeeDTR() {
 
     setLoading(true);
 
-    const { data, error } = await supabase
+    const [{ data: employeeData }, { data, error }] = await Promise.all([
+      supabase
+        .from("employees")
+        .select("employee_id, first_name, last_name, position, department, outlet")
+        .eq("employee_id", user.employeeId)
+        .maybeSingle(),
+      supabase
       .from("attendance_logs")
       .select(
-        "log_id, employee_id, attendance_date, time_in, time_out, raw_time_in, raw_time_out, total_hours, overtime_minutes, is_overtime"
+        "log_id, employee_id, attendance_date, time_in, time_out, raw_time_in, raw_time_out, total_hours, undertime_minutes, overtime_minutes, is_late, is_undertime, is_overtime, is_absent, is_incomplete, remarks, validation_status"
       )
       .eq("employee_id", user.employeeId)
       .gte("attendance_date", periodStart)
       .lte("attendance_date", periodEnd)
-      .order("attendance_date", { ascending: true });
+        .order("attendance_date", { ascending: true }),
+    ]);
+
+    setEmployeeProfile((employeeData as EmployeeProfile | null) ?? null);
 
     if (error) {
       console.error("DTR fetch error:", error);
@@ -273,6 +325,11 @@ export default function EmployeeDTR() {
         year: "numeric",
       })
     : "No record yet";
+
+  const displayName =
+    employeeProfile?.first_name || employeeProfile?.last_name
+      ? `${employeeProfile.first_name ?? ""} ${employeeProfile.last_name ?? ""}`.trim()
+      : user?.name ?? "";
 
   const summaryCards = [
     {
@@ -511,25 +568,32 @@ export default function EmployeeDTR() {
           ) : (
             <>
               <Typography align="center" fontWeight={700} sx={{ mb: 0.5, fontSize: 16 }}>
+                {COMPANY.name.toUpperCase()}
+              </Typography>
+              <Typography align="center" sx={{ mb: 0.5, fontSize: 10.5 }}>
+                {COMPANY.address}
+              </Typography>
+              <Typography align="center" fontWeight={700} sx={{ mb: 1, fontSize: 15 }}>
                 DAILY TIME RECORD
               </Typography>
 
-              <Typography
-                align="center"
-                sx={{
-                  borderBottom: "1px solid #000",
-                  width: 280,
-                  mx: "auto",
-                  mb: 0.5,
-                  fontSize: 13,
-                }}
-              >
-                {user?.name}
-              </Typography>
-
-              <Typography align="center" sx={{ mb: 1.2, fontSize: 12 }}>
-                For the month of <b>{monthName} {year}</b>
-              </Typography>
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0.75, mb: 1.2 }}>
+                {[
+                  ["Employee Name", displayName],
+                  ["Employee ID", user?.employeeId ?? ""],
+                  ["Position", employeeProfile?.position ?? ""],
+                  ["Department", employeeProfile?.department ?? ""],
+                  ["Outlet / Branch", employeeProfile?.outlet ?? user?.outlet ?? ""],
+                  ["Month Covered", `${monthName} ${year}`],
+                ].map(([label, value]) => (
+                  <Box key={label} sx={{ display: "grid", gridTemplateColumns: "86px 1fr", gap: 0.5, alignItems: "end" }}>
+                    <Typography sx={{ fontSize: 10.5 }}>{label}:</Typography>
+                    <Typography sx={{ borderBottom: "1px solid #000", fontSize: 10.5, minHeight: 15 }}>
+                      {value}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
 
               <TableContainer sx={{ overflowX: "auto" }}>
                 <Table size="small" className="dtr-table" sx={{ border: "1px solid #000", minWidth: 620 }}>
@@ -550,11 +614,17 @@ export default function EmployeeDTR() {
                       <TableCell rowSpan={2} align="center" sx={tableCellSx}>
                         Total Hours
                       </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
+                        Undertime
+                      </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
+                        Remarks
+                      </TableCell>
                     </TableRow>
 
                     <TableRow>
-                      {["Arrival", "Depart", "Arrival", "Depart", "Arrival", "Depart"].map((label) => (
-                        <TableCell key={label} align="center" sx={tableCellSx}>
+                      {["Arrival", "Depart", "Arrival", "Depart", "Arrival", "Depart"].map((label, index) => (
+                        <TableCell key={`${label}-${index}`} align="center" sx={tableCellSx}>
                           {label}
                         </TableCell>
                       ))}
@@ -575,6 +645,8 @@ export default function EmployeeDTR() {
                           <TableCell align="center" sx={tableCellSx}>{record?.overtime_arrival ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.overtime_departure ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.total_hours ?? ""}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{record?.undertime ?? ""}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{record?.remarks ?? ""}</TableCell>
                         </TableRow>
                       );
                     })}
@@ -586,31 +658,30 @@ export default function EmployeeDTR() {
                 I CERTIFY on my honor that the above is a true and correct report of the hours of work performed.
               </Typography>
 
-              <Typography
-                align="center"
-                sx={{
-                  mt: 3.5,
-                  borderTop: "1px solid #000",
-                  width: 240,
-                  mx: "auto",
-                  fontSize: 11,
-                }}
-              >
-                Employee Signature
-              </Typography>
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, mt: 1.2 }}>
+                <Typography sx={{ fontSize: 10.5 }}>
+                  Total Recorded Days: <b>{records.length}</b>
+                </Typography>
+                <Typography sx={{ fontSize: 10.5 }}>
+                  Total Hours: <b>{totalHours.toFixed(2)}</b>
+                </Typography>
+              </Box>
 
-              <Typography
-                align="center"
-                sx={{
-                  mt: 3.5,
-                  borderTop: "1px solid #000",
-                  width: 240,
-                  mx: "auto",
-                  fontSize: 11,
-                }}
-              >
-                In-Charge
-              </Typography>
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, mt: 4 }}>
+                {["Employee Signature", "Verified by / In-Charge"].map(label => (
+                  <Typography
+                    key={label}
+                    align="center"
+                    sx={{
+                      borderTop: "1px solid #000",
+                      fontSize: 11,
+                      pt: 0.35,
+                    }}
+                  >
+                    {label}
+                  </Typography>
+                ))}
+              </Box>
             </>
           )}
         </Paper>

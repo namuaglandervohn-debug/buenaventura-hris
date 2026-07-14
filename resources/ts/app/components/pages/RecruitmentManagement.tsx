@@ -22,7 +22,8 @@ import {
   CalendarToday,
   EventAvailable,
   TuneOutlined,
-  DeleteOutline,
+  ArchiveOutlined,
+  UnarchiveOutlined,
   HowToReg,
 } from '@mui/icons-material';
 import {
@@ -75,7 +76,8 @@ type AppStatus =
   | 'For Interview'
   | 'Hired'
   | 'Not Qualified'
-  | 'Not Hired';
+  | 'Not Hired'
+  | 'Archived';
 
 interface Application {
   id: string;
@@ -139,6 +141,10 @@ interface Application {
   interviewFeedback?: string;
   hiringDecision?: string;
   scheduledBy?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 
   raw?: any;
 }
@@ -151,6 +157,7 @@ const STATUS_COLORS: Record<AppStatus, 'default' | 'primary' | 'warning' | 'info
   Hired: 'success',
   'Not Qualified': 'error',
   'Not Hired': 'error',
+  Archived: 'default',
 };
 
 const ALL_STATUSES: AppStatus[] = [
@@ -160,7 +167,7 @@ const ALL_STATUSES: AppStatus[] = [
   'For Interview',
   'Hired',
   'Not Qualified',
-  'Not Hired',
+  'Archived',
 ];
 
 
@@ -222,6 +229,7 @@ const statusChipSx = (status: AppStatus) => {
     Hired: { bg: '#e5f8e9', color: '#217a43', border: '#a9dfb6' },
     'Not Qualified': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
     'Not Hired': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
+    Archived: { bg: '#f4f1e8', color: '#7a5b1f', border: '#dfcfa9' },
   };
 
   const selected = styles[status] ?? styles.Submitted;
@@ -509,6 +517,10 @@ const mapApplicantRow = (app: any): Application => {
     interviewFeedback: app.interview_feedback ?? '',
     hiringDecision: app.hiring_decision ?? '',
     scheduledBy: app.scheduled_by ?? '',
+    isArchived: Boolean(app.is_archived) || app.status === 'Archived',
+    archivedAt: app.archived_at ?? '',
+    archivedBy: app.archived_by ?? '',
+    archiveReason: app.archive_reason ?? '',
     raw: app,
   };
 
@@ -654,6 +666,7 @@ export default function RecruitmentManagement() {
   const [interviewDialog, setInterviewDialog] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState(0);
+  const [archiveView, setArchiveView] = useState<'active' | 'archived'>('active');
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -775,15 +788,45 @@ export default function RecruitmentManagement() {
     };
   }, [fetchApplications]);
 
+  const sendApplicantStatusEmail = async (app: Application, status: AppStatus, overrides: Partial<Application> = {}) => {
+    if (!app.email) return;
+
+    const response = await fetch('/api/applications/send-status-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        applicant_id: app.id,
+        email: app.email,
+        name: buildApplicantFullName({ ...app, ...overrides }),
+        position: overrides.position ?? app.position,
+        status,
+        note: overrides.interviewNotes ?? overrides.requirementsNote ?? overrides.hiringDecision ?? '',
+        interview_date: overrides.interviewDate ?? app.interviewDate ?? '',
+        interview_time: overrides.interviewTime ?? app.interviewTime ?? '',
+        interview_location: overrides.interviewLocation ?? app.interviewLocation ?? '',
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.message || 'Unable to send application status email.');
+    }
+  };
+
   const updateApplicantRecord = async (
     id: string,
     dbUpdate: Record<string, any>,
     localUpdate: Partial<Application>,
-    message: string
+    message: string,
+    options?: { notifyStatus?: AppStatus }
   ) => {
     setSaving(true);
 
     try {
+      const previousApp = applications.find(app => app.id === id) ?? selectedApp;
       const { error: updateError } = await supabase.from('applicants').update(dbUpdate).eq('applicant_id', id);
 
       if (updateError) throw updateError;
@@ -804,7 +847,20 @@ export default function RecruitmentManagement() {
         });
       }
 
-      setSnackbar({ open: true, message, severity: 'success' });
+      if (options?.notifyStatus && previousApp?.email) {
+        try {
+          await sendApplicantStatusEmail(previousApp, options.notifyStatus, localUpdate);
+          setSnackbar({ open: true, message: `${message} Applicant was notified by email.`, severity: 'success' });
+        } catch (emailError: any) {
+          setSnackbar({
+            open: true,
+            message: `${message} Email notification failed: ${emailError.message ?? emailError}`,
+            severity: 'error',
+          });
+        }
+      } else {
+        setSnackbar({ open: true, message, severity: 'success' });
+      }
     } catch (e: any) {
       setSnackbar({ open: true, message: `Failed: ${e.message}`, severity: 'error' });
       throw e;
@@ -814,7 +870,33 @@ export default function RecruitmentManagement() {
   };
 
   const handleUpdateStatus = (id: string, status: AppStatus) =>
-    updateApplicantRecord(id, { status }, { status }, `Status updated to "${status}"!`);
+    updateApplicantRecord(
+      id,
+      { status },
+      { status },
+      `Status updated to "${status}"!`,
+      status === 'For Interview' ? undefined : { notifyStatus: status }
+    );
+
+  const buildRequirementsStatusNote = (status: AppStatus) => {
+    const standardRequirements: [string, boolean][] = [
+      ['Resume / CV', reqForm.hasResume],
+      ['Birth Certificate', reqForm.hasBirthCert],
+      ['Transcript of Records', reqForm.hasTOR],
+      ['Medical Certificate', reqForm.hasMedCert],
+      ...(reqForm.customRequirements ?? []).map(item => [item.label, item.checked] as [string, boolean]),
+    ];
+    const submitted = standardRequirements.filter(([, checked]) => checked).map(([label]) => label);
+    const missing = standardRequirements.filter(([, checked]) => !checked).map(([label]) => label);
+
+    return [
+      `Requirements status: ${status}.`,
+      submitted.length ? `Submitted requirements: ${submitted.join(', ')}.` : '',
+      missing.length ? `Pending/missing requirements: ${missing.join(', ')}.` : 'All listed requirements have been marked submitted.',
+      reqForm.requirementsNote ? `HR note: ${reqForm.requirementsNote}` : '',
+      'Please keep your Applicant ID for tracking your requirements and application status.',
+    ].filter(Boolean).join('\n');
+  };
 
   const handleSaveRequirements = async (id: string) => {
     const hasMissingStandard = !reqForm.hasResume || !reqForm.hasBirthCert || !reqForm.hasTOR || !reqForm.hasMedCert;
@@ -834,8 +916,9 @@ export default function RecruitmentManagement() {
     await updateApplicantRecord(
       id,
       applicationToApplicantUpdate(localUpdate),
-      localUpdate,
-      '✅ Requirements checklist saved!'
+      { ...localUpdate, requirementsNote: buildRequirementsStatusNote(newStatus) },
+      'Requirements checklist saved!',
+      { notifyStatus: newStatus }
     );
   };
 
@@ -857,6 +940,17 @@ export default function RecruitmentManagement() {
       localUpdate,
       '✅ Interview scheduled! Status set to "For Interview".'
     );
+
+    try {
+      await sendApplicantStatusEmail(selectedApp, 'For Interview', localUpdate);
+      setSnackbar({ open: true, message: 'Interview scheduled and applicant was notified by email.', severity: 'success' });
+    } catch (emailError: any) {
+      setSnackbar({
+        open: true,
+        message: `Interview scheduled, but email notification failed: ${emailError.message ?? emailError}`,
+        severity: 'error',
+      });
+    }
 
     setInterviewDialog(false);
   };
@@ -895,6 +989,23 @@ export default function RecruitmentManagement() {
       );
 
       if (decision !== 'Hired') {
+        const app = applications.find(application => application.id === id) ?? selectedApp;
+        if (app) {
+          try {
+            await sendApplicantStatusEmail(app, status, {
+              interviewFeedback: gmForm.interviewFeedback,
+              hiringDecision: decision,
+              status,
+            });
+            setSnackbar({ open: true, message: `Hiring decision: ${status}. Applicant was notified by email.`, severity: 'success' });
+          } catch (emailError: any) {
+            setSnackbar({
+              open: true,
+              message: `Hiring decision saved, but email notification failed: ${emailError.message ?? emailError}`,
+              severity: 'error',
+            });
+          }
+        }
         setViewDialog(false);
         return;
       }
@@ -938,6 +1049,45 @@ export default function RecruitmentManagement() {
           const body = await response.json().catch(() => null);
           throw new Error(body?.message || 'Unable to send hired credentials email.');
         }
+      };
+
+      const createOrResetHiredAccount = async (payload: {
+        employeeId: string;
+        name: string;
+        email: string;
+        password: string;
+      }) => {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken) throw new Error('Your admin session has expired. Please sign in again.');
+
+        const response = await fetch('/api/applications/hired-account', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            employee_id: payload.employeeId,
+            name: payload.name,
+            email: payload.email,
+            password: payload.password,
+            first_name: firstName,
+            middle_name: middleName,
+            last_name: lastName,
+            suffix,
+            outlet: '',
+          }),
+        });
+
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(body?.message || body?.email || body?.supabase || 'Unable to create Supabase Auth account.');
+        }
+
+        return body;
       };
 
       const { data: existingEmployee, error: existingEmployeeError } = await supabase
@@ -992,70 +1142,20 @@ export default function RecruitmentManagement() {
 
       if (employeeSaveError) throw employeeSaveError;
 
-      const { data: existingAccount, error: existingAccountError } = await supabase
-        .from('user_accounts')
-        .select('user_id')
-        .eq('employee_id', employeeId)
-        .maybeSingle();
+      const loginEmail = `${loginName}@buenaventura-hris.me`;
+      const temporaryPassword = generateTemporaryPassword(loginName);
+      await createOrResetHiredAccount({
+        employeeId,
+        name: fullName,
+        email: loginEmail,
+        password: temporaryPassword,
+      });
 
-      if (existingAccountError) throw existingAccountError;
-
-      const accountPayload = {
-        employee_id: employeeId,
-        first_name: firstName,
-        middle_name: middleName,
-        last_name: lastName,
-        full_name: fullName,
-        suffix,
-        email: `${loginName}@buenaventura-hris.me`,
-        role: 'employee',
-        outlet: '',
-        is_active: true,
-      };
-      let loginEmail = accountPayload.email;
-      let temporaryPassword = '';
-
-      if (existingAccount?.user_id) {
-        const { data: existingAccountWithPassword, error: existingAccountPasswordError } = await supabase
-          .from('user_accounts')
-          .select('password')
-          .eq('employee_id', employeeId)
-          .maybeSingle();
-
-        if (existingAccountPasswordError) throw existingAccountPasswordError;
-        temporaryPassword = existingAccountWithPassword?.password || generateTemporaryPassword(loginName);
-
-        const { error: accountUpdateError } = await supabase
-          .from('user_accounts')
-          .update({ ...accountPayload, password: temporaryPassword })
-          .eq('employee_id', employeeId);
-
-        if (accountUpdateError) throw accountUpdateError;
-      } else {
-        const { count: userCount, error: userCountError } = await supabase
-          .from('user_accounts')
-          .select('*', { count: 'exact', head: true });
-
-        if (userCountError) throw userCountError;
-
-        const userId = `USR-2026-${String((userCount ?? 0) + 1).padStart(4, '0')}`;
-        const password = generateTemporaryPassword(loginName);
-        temporaryPassword = password;
-
-        const { error: accountInsertError } = await supabase.from('user_accounts').insert({
-          user_id: userId,
-          ...accountPayload,
-          password,
-        });
-
-        if (accountInsertError) throw accountInsertError;
-
-        setSnackbar({
-          open: true,
-          message: `✅ Applicant hired and employee account created. Temporary password: ${password}`,
-          severity: 'success',
-        });
-      }
+      setSnackbar({
+        open: true,
+        message: `Applicant hired and employee Supabase Auth account is ready. Temporary password: ${temporaryPassword}`,
+        severity: 'success',
+      });
 
       try {
         await sendHiredCredentialsEmail({
@@ -1083,17 +1183,46 @@ export default function RecruitmentManagement() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm(`Delete application ${id}? This cannot be undone.`)) return;
+  const handleArchiveToggle = async (app: Application, archive: boolean) => {
+    const action = archive ? 'archive' : 'restore';
+    if (!window.confirm(`${archive ? 'Archive' : 'Restore'} application ${app.id}?`)) return;
 
     try {
-      const { error: deleteError } = await supabase.from('applicants').delete().eq('applicant_id', id);
-      if (deleteError) throw deleteError;
+      const archivePayload = archive
+        ? {
+            status: 'Archived',
+            requirements_note: [
+              app.requirementsNote,
+              `Archived ${new Date().toLocaleString()} by ${user?.email ?? user?.name ?? 'HR/Admin'} for applicant record retention.`,
+            ].filter(Boolean).join('\n'),
+          }
+        : {
+            status: 'Submitted',
+            requirements_note: app.requirementsNote ?? null,
+          };
 
-      setApplications(prev => prev.filter(app => app.id !== id));
-      setSnackbar({ open: true, message: 'Application deleted successfully.', severity: 'success' });
+      const { error: archiveError } = await supabase.from('applicants').update(archivePayload).eq('applicant_id', app.id);
+      if (archiveError) throw archiveError;
+
+      setApplications(prev =>
+        prev.map(item =>
+          item.id === app.id
+            ? {
+                ...item,
+                isArchived: archive,
+                status: archive ? 'Archived' : 'Submitted',
+                requirementsNote: archivePayload.requirements_note ?? '',
+              }
+            : item
+        )
+      );
+      setSnackbar({
+        open: true,
+        message: `Application ${action}d successfully. The record remains retained in the archive.`,
+        severity: 'success',
+      });
     } catch (e: any) {
-      setSnackbar({ open: true, message: `Failed to delete: ${e.message}`, severity: 'error' });
+      setSnackbar({ open: true, message: `Failed to ${action}: ${e.message}`, severity: 'error' });
     }
   };
 
@@ -1175,9 +1304,10 @@ export default function RecruitmentManagement() {
 
   const searchedApplications = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return applications;
+    const scopedApplications = applications.filter(app => (archiveView === 'archived' ? app.isArchived : !app.isArchived));
+    if (!query) return scopedApplications;
 
-    return applications.filter(app =>
+    return scopedApplications.filter(app =>
       [
         app.id,
         app.name,
@@ -1190,7 +1320,7 @@ export default function RecruitmentManagement() {
         app.hearAbout,
       ].some(value => String(value ?? '').toLowerCase().includes(query))
     );
-  }, [applications, search]);
+  }, [applications, archiveView, search]);
 
   const tabData = useMemo(
     () => [
@@ -1202,6 +1332,7 @@ export default function RecruitmentManagement() {
       { label: 'Hired', data: searchedApplications.filter(a => a.status === 'Hired') },
       { label: 'Not Qualified', data: searchedApplications.filter(a => a.status === 'Not Qualified') },
       { label: 'Not Hired', data: searchedApplications.filter(a => a.status === 'Not Hired') },
+      { label: 'Archived', data: searchedApplications.filter(a => a.status === 'Archived') },
     ],
     [searchedApplications]
   );
@@ -1954,6 +2085,42 @@ export default function RecruitmentManagement() {
             ),
           }}
         />
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5 }}>
+          <Chip
+            icon={<InsertDriveFile />}
+            label={`Active Records (${applications.filter(app => !app.isArchived).length})`}
+            clickable
+            variant={archiveView === 'active' ? 'filled' : 'outlined'}
+            onClick={() => {
+              setArchiveView('active');
+              setTab(0);
+            }}
+            sx={{
+              ...chipIconSx,
+              fontWeight: 700,
+              bgcolor: archiveView === 'active' ? GREEN_UI.greenSoft : '#ffffff',
+              color: GREEN_UI.greenDark,
+              borderColor: GREEN_UI.borderStrong,
+            }}
+          />
+          <Chip
+            icon={<ArchiveOutlined />}
+            label={`Archived Records (${applications.filter(app => app.isArchived).length})`}
+            clickable
+            variant={archiveView === 'archived' ? 'filled' : 'outlined'}
+            onClick={() => {
+              setArchiveView('archived');
+              setTab(0);
+            }}
+            sx={{
+              ...chipIconSx,
+              fontWeight: 700,
+              bgcolor: archiveView === 'archived' ? '#fff7e0' : '#ffffff',
+              color: archiveView === 'archived' ? '#9b6b00' : GREEN_UI.greenDark,
+              borderColor: archiveView === 'archived' ? '#f5d786' : GREEN_UI.borderStrong,
+            }}
+          />
+        </Box>
       </Paper>
 
       <Paper elevation={0} sx={{ ...softCardSx, mb: 2, p: { xs: 0.75, sm: 1 }, overflow: 'hidden' }}>
@@ -2208,21 +2375,21 @@ export default function RecruitmentManagement() {
                         )}
                         {(isHR || isGM) && (
                           <Chip
-                            icon={<DeleteOutline />}
-                            label="Delete"
+                            icon={app.isArchived ? <UnarchiveOutlined /> : <ArchiveOutlined />}
+                            label={app.isArchived ? 'Restore' : 'Archive'}
                             size="small"
                             clickable
                             variant="outlined"
-                            onClick={() => handleDelete(app.id)}
+                            onClick={() => handleArchiveToggle(app, !app.isArchived)}
                             sx={{
                               ...chipIconSx,
-                              minWidth: 76,
+                              minWidth: 86,
                               justifyContent: 'center',
                               fontWeight: 600,
-                              borderColor: '#efb8b8',
-                              color: '#9c2f2f',
-                              bgcolor: '#fffafa',
-                              '&:hover': { bgcolor: '#fdeaea' },
+                              borderColor: app.isArchived ? '#a9dfb6' : '#f5d786',
+                              color: app.isArchived ? GREEN_UI.greenDark : '#9b6b00',
+                              bgcolor: app.isArchived ? GREEN_UI.greenSoft : '#fff7e0',
+                              '&:hover': { bgcolor: app.isArchived ? '#dff4e4' : '#ffefd0' },
                             }}
                           />
                         )}

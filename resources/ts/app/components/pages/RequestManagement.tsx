@@ -151,6 +151,16 @@ const LEAVE_TYPES = [
   'Other',
 ];
 
+const DEFAULT_LEAVE_ENTITLEMENTS: Record<string, number> = {
+  'Vacation Leave': 5,
+  'Sick Leave': 5,
+  'Emergency Leave': 3,
+  'Maternity Leave': 105,
+  'Paternity Leave': 7,
+  'Bereavement Leave': 3,
+  Other: 0,
+};
+
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
   cardBg: 'rgba(255, 255, 255, 0.92)',
@@ -797,6 +807,24 @@ export default function RequestManagement() {
     },
   ];
 
+  const leaveBalances = Object.entries(DEFAULT_LEAVE_ENTITLEMENTS).map(([leaveType, available]) => {
+    const approvedDays = requests
+      .filter(request =>
+        request.type === 'Leave' &&
+        request.status === 'Approved' &&
+        request.leaveType === leaveType &&
+        (!isEmployee || request.employeeId === currentEmployeeId)
+      )
+      .reduce((sum, request) => sum + Number(request.totalDays ?? 0), 0);
+
+    return {
+      leaveType,
+      available,
+      used: approvedDays,
+      remaining: Math.max(available - approvedDays, 0),
+    };
+  });
+
   const resetNewRequestType = (type: RequestType) => {
     setNewRequest(prev => ({
       ...prev,
@@ -983,6 +1011,62 @@ export default function RequestManagement() {
           </Grid>
         ))}
       </Grid>
+
+      <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5, flexWrap: 'wrap' }}>
+          <Box
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: '16px',
+              display: 'grid',
+              placeItems: 'center',
+              bgcolor: GREEN_UI.greenSoft,
+              color: GREEN_UI.greenDark,
+            }}
+          >
+            <CalendarMonth />
+          </Box>
+          <Box>
+            <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
+              Leave Balance
+            </Typography>
+            <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+              Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.
+            </Typography>
+          </Box>
+        </Box>
+        <Grid container spacing={1.2}>
+          {leaveBalances.map(balance => (
+            <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
+              <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
+                <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
+                  {balance.leaveType}
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
+                  {[
+                    ['Available', balance.available],
+                    ['Used', balance.used],
+                    ['Remaining', balance.remaining],
+                  ].map(([label, value]) => (
+                    <Box key={label} sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                        {label}
+                      </Typography>
+                      <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
+                        {value}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </Paper>
+            </Grid>
+          ))}
+        </Grid>
+        <Alert severity="info" sx={{ mt: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
+          Unused leave credits remain available until the end of the current leave cycle. Carry-over or cash conversion is processed only when HR/Admin records an approved organization adjustment; otherwise unused credits are reset for the next cycle.
+        </Alert>
+      </Paper>
 
       {error && (
         <Alert

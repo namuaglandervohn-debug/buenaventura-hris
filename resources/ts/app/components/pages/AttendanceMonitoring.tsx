@@ -70,6 +70,7 @@ interface Attendance {
   undertime: string;
   overtime: string;
   status: "Present" | "Late" | "Absent" | "On Leave";
+  discrepancy: string;
 }
 
 type AttendanceDraft = Omit<Attendance, "id" | "displayId" | "employeeId">;
@@ -93,11 +94,13 @@ const EMPTY: AttendanceDraft = {
   undertime: "0",
   overtime: "0",
   status: "Present",
+  discrepancy: "Complete",
 };
 
 const IMPORT_CONCURRENCY = 10;
 const DELETE_CONCURRENCY = 10;
 const PREVIEW_ROW_LIMIT = 50;
+const REQUIRED_DAILY_HOURS = 8;
 
 
 const GREEN_UI = {
@@ -643,15 +646,36 @@ function attendanceStatusFromDb(row: any): Attendance["status"] {
   return "Present";
 }
 
+function getAttendanceDiscrepancy(row: Partial<Attendance> & Record<string, any>) {
+  const status = getStatusValue(row.status ?? attendanceStatusFromDb(row));
+  if (status === "On Leave") return "On Leave";
+  if (status === "Absent" || row.is_absent) return "Absent";
+
+  const issues: string[] = [];
+  const timeIn = String(row.timeIn ?? row.raw_time_in ?? row.time_in ?? "").trim();
+  const timeOut = String(row.timeOut ?? row.raw_time_out ?? row.time_out ?? "").trim();
+  const totalHours = toSafeNumber(row.totalHours ?? row.total_hours);
+  const lateMinutes = toSafeNumber(row.late ?? row.late_minutes);
+  const undertimeMinutes = toSafeNumber(row.undertime ?? row.undertime_minutes);
+
+  if (!timeIn) issues.push("Missing time-in");
+  if (!timeOut) issues.push("Missing time-out");
+  if (lateMinutes > 0 || row.is_late) issues.push(`Late ${Math.round(lateMinutes)} min`);
+  if (undertimeMinutes > 0 || row.is_undertime) issues.push(`Undertime ${Math.round(undertimeMinutes)} min`);
+  if (totalHours > 0 && totalHours < REQUIRED_DAILY_HOURS) issues.push("Incomplete required hours");
+  if (row.is_incomplete && !issues.some((issue) => issue.startsWith("Missing"))) issues.push("Incomplete punches");
+
+  return issues.length > 0 ? issues.join("; ") : "Complete";
+}
+
+function needsAttendanceReview(discrepancy: string) {
+  return discrepancy !== "Complete" && discrepancy !== "On Leave";
+}
+
 function mapAttendanceLogToRow(row: any, index = 0): Attendance {
   const date = normalizeDateForFilter(row?.attendance_date ?? row?.date);
   const logId = String(row?.log_id ?? row?.id ?? "");
-  return {
-    id: logId,
-    displayId: formatAttendanceDisplayId(logId, date, index + 1),
-    employeeId: row?.employee_id ?? undefined,
-    employee: row?.employee_name || row?.employee || row?.employee_id || "Unknown Employee",
-    date,
+  const mapped = {
     timeIn: fromDbTime(row?.time_in ?? row?.timeIn),
     timeOut: fromDbTime(row?.time_out ?? row?.timeOut),
     totalHours: String(row?.total_hours ?? row?.totalHours ?? "0"),
@@ -659,6 +683,15 @@ function mapAttendanceLogToRow(row: any, index = 0): Attendance {
     undertime: String(row?.undertime_minutes ?? row?.undertime ?? "0"),
     overtime: String(row?.overtime_minutes ?? row?.overtime ?? "0"),
     status: getStatusValue(row?.status ?? attendanceStatusFromDb(row)),
+  };
+  return {
+    id: logId,
+    displayId: formatAttendanceDisplayId(logId, date, index + 1),
+    employeeId: row?.employee_id ?? undefined,
+    employee: row?.employee_name || row?.employee || row?.employee_id || "Unknown Employee",
+    date,
+    ...mapped,
+    discrepancy: getAttendanceDiscrepancy({ ...row, ...mapped }),
   };
 }
 
@@ -716,6 +749,15 @@ function buildAttendancePayload(row: Partial<Attendance>, employee: EmployeeOpti
   const overtimeMinutes = Math.round(toSafeNumber(row.overtime));
   const isAbsent = status === "Absent";
   const isOnLeave = status === "On Leave";
+  const discrepancy = getAttendanceDiscrepancy({
+    ...row,
+    status,
+    late: lateMinutes,
+    undertime: undertimeMinutes,
+    overtime: overtimeMinutes,
+    is_absent: isAbsent,
+  });
+  const needsReview = needsAttendanceReview(discrepancy);
 
   return {
     ...(logId ? { log_id: logId } : {}),
@@ -734,10 +776,10 @@ function buildAttendancePayload(row: Partial<Attendance>, employee: EmployeeOpti
     is_undertime: undertimeMinutes > 0,
     is_overtime: overtimeMinutes > 0,
     is_absent: isAbsent,
-    is_incomplete: !isAbsent && (!row.timeIn || !row.timeOut),
+    is_incomplete: needsReview && !isAbsent && !isOnLeave,
     source: "Manual Encoding",
-    validation_status: "Validated",
-    remarks: isOnLeave ? "On Leave" : null,
+    validation_status: needsReview ? "Needs Review" : "Validated",
+    remarks: isOnLeave ? "On Leave" : discrepancy === "Complete" ? null : discrepancy,
     updated_at: new Date().toISOString(),
   };
 }
@@ -1440,8 +1482,10 @@ export default function AttendanceMonitoring() {
     const totals = {
       present: 0,
       late: 0,
+      undertime: 0,
       absent: 0,
       onLeave: 0,
+      discrepancies: 0,
     };
 
     for (const record of filtered) {
@@ -1450,8 +1494,10 @@ export default function AttendanceMonitoring() {
       }
 
       if (record.status === "Late" || toSafeNumber(record.late) > 0) totals.late++;
+      if (toSafeNumber(record.undertime) > 0) totals.undertime++;
       if (record.status === "Absent") totals.absent++;
       if (record.status === "On Leave") totals.onLeave++;
+      if (needsAttendanceReview(record.discrepancy)) totals.discrepancies++;
     }
 
     return totals;
@@ -2072,6 +2118,7 @@ export default function AttendanceMonitoring() {
                 <TableCell>Late (min)</TableCell>
                 <TableCell>Undertime (min)</TableCell>
                 <TableCell>Overtime (min)</TableCell>
+                <TableCell>Discrepancy</TableCell>
                 <TableCell>Status</TableCell>
                 {canManageAttendance && <TableCell>Actions</TableCell>}
               </TableRow>
@@ -2080,7 +2127,7 @@ export default function AttendanceMonitoring() {
               {filtered.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={canManageAttendance ? 11 : 10}
+                    colSpan={canManageAttendance ? 12 : 11}
                     align="center"
                     sx={{ py: 7, color: GREEN_UI.muted }}
                   >
@@ -2165,6 +2212,25 @@ export default function AttendanceMonitoring() {
                       }}
                     >
                       {att.overtime}
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 210 }}>
+                      <Chip
+                        label={att.discrepancy}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          maxWidth: 260,
+                          bgcolor: needsAttendanceReview(att.discrepancy) ? "#fff7e0" : GREEN_UI.greenSoft,
+                          color: needsAttendanceReview(att.discrepancy) ? "#9b6b00" : GREEN_UI.greenDark,
+                          borderColor: needsAttendanceReview(att.discrepancy) ? "#f5d786" : GREEN_UI.borderStrong,
+                          fontWeight: 600,
+                          "& .MuiChip-label": {
+                            display: "block",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          },
+                        }}
+                      />
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -2318,17 +2384,19 @@ export default function AttendanceMonitoring() {
               <Typography variant="h6" fontWeight={700} sx={{ color: GREEN_UI.text, lineHeight: 1.2 }}>
             Summary {filterDate ? `for ${filterDate}` : "(All Records)"}
               </Typography>
-              <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>A compact count of the filtered attendance records.</Typography>
+              <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>Discrepancy Review: automatic counts for filtered attendance records.</Typography>
             </Box>
           </Box>
           <Grid container spacing={1.5}>
             {[
               ["Present (incl. Late)", summary.present, "success"],
               ["Late", summary.late, "warning"],
+              ["Undertime", summary.undertime, "warning"],
+              ["Needs Review", summary.discrepancies, "warning"],
               ["Absent", summary.absent, "error"],
               ["On Leave", summary.onLeave, "info"],
             ].map(([label, val]) => (
-              <Grid key={String(label)} size={{ xs: 6, md: 3 }}>
+              <Grid key={String(label)} size={{ xs: 6, md: 2 }}>
                 <Typography variant="body2" sx={{ color: GREEN_UI.muted, fontWeight: 600 }}>
                   {label}
                 </Typography>

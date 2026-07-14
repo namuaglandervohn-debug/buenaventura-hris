@@ -146,7 +146,7 @@ function getSalaryLabel(salary?: string | null) {
 }
 
 export default function LandingPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -291,6 +291,11 @@ export default function LandingPage() {
     navigate(`/apply?position=${selectedPosition}`);
   };
 
+  const handleEmployeeLogin = () => {
+    if (user) logout();
+    navigate("/login?fresh=1");
+  };
+
   const navButtonSx = {
     color: "#23372b",
     fontWeight: 800,
@@ -413,7 +418,7 @@ export default function LandingPage() {
             <Button
               variant="contained"
               startIcon={<Login />}
-              onClick={() => navigate("/login")}
+              onClick={handleEmployeeLogin}
               sx={{
                 px: { xs: 1.8, sm: 3 },
                 py: 1.15,

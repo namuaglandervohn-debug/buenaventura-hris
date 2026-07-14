@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Box, Typography, Paper, Button, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField, Chip, Dialog,
   DialogTitle, DialogContent, DialogActions, Grid, CircularProgress,
   Alert, Tooltip, IconButton, MenuItem,
 } from '@mui/material';
-import { Calculate, Visibility, Send, AddCircleOutline, Sync, Payments, TaskAlt, DeleteOutline, Print } from '@mui/icons-material';
+import { Calculate, Visibility, Send, AddCircleOutline, Sync, Payments, TaskAlt, DeleteOutline, Print, CloudUpload, Download } from '@mui/icons-material';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { POSITIONS } from '../../lib/constants';
@@ -67,6 +67,8 @@ interface Payroll {
   breakages?: string;
   amesco?: string;
   pagibigLoan?: string;
+  uploadedPayslipName?: string;
+  uploadedPayslipPath?: string;
 }
 
 interface EmployeeOption {
@@ -292,6 +294,8 @@ export default function PayrollComputation() {
   const { user } = useAuth();
   const [generatePosition, setGeneratePosition] = useState('');
   const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
+  const payslipUploadRef = useRef<HTMLInputElement>(null);
+  const [uploadingPayslip, setUploadingPayslip] = useState(false);
 
   // ── Payslip edit state ───────────────────────────────────────────────
   const [editingPayslip, setEditingPayslip] = useState(false);
@@ -421,6 +425,8 @@ export default function PayrollComputation() {
       breakages: details.breakages ?? '',
       amesco: details.amesco ?? '',
       pagibigLoan: details.pagibigLoan ?? '',
+      uploadedPayslipName: details.uploadedPayslipName ?? '',
+      uploadedPayslipPath: details.uploadedPayslipPath ?? '',
     };
   };
 
@@ -972,6 +978,93 @@ export default function PayrollComputation() {
     } catch (e: any) {
       setSnackbar({ open: true, message: `Failed: ${e.message ?? e}`, severity: 'error' });
     }
+  };
+
+  const handlePayslipFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedPayroll) return;
+
+    setUploadingPayslip(true);
+    try {
+      const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const objectPath = `${selectedPayroll.employeeId || 'employee'}/${selectedPayroll.period}/${selectedPayroll.id}-${Date.now()}-${safeFileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('payslips')
+        .upload(objectPath, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const payslipDetails = {
+        nsdHours: selectedPayroll.nsdHours ?? '',
+        nsdAmt: selectedPayroll.nsdAmt ?? '',
+        regularHolidayDays: selectedPayroll.regularHolidayDays ?? '',
+        regularHolidayAmt: selectedPayroll.regularHolidayAmt ?? '',
+        specialHolidayDays: selectedPayroll.specialHolidayDays ?? '',
+        specialHolidayAmt: selectedPayroll.specialHolidayAmt ?? '',
+        silDays: selectedPayroll.silDays ?? '',
+        silAmt: selectedPayroll.silAmt ?? '',
+        allowanceAmt: selectedPayroll.allowanceAmt ?? '',
+        retroAmt: selectedPayroll.retroAmt ?? '',
+        sssAmt: selectedPayroll.sssAmt ?? '',
+        phicAmt: selectedPayroll.phicAmt ?? '',
+        hdmfAmt: selectedPayroll.hdmfAmt ?? '',
+        cashAdvance: selectedPayroll.cashAdvance ?? '',
+        atd: selectedPayroll.atd ?? '',
+        otherCharges: selectedPayroll.otherCharges ?? '',
+        breakages: selectedPayroll.breakages ?? '',
+        amesco: selectedPayroll.amesco ?? '',
+        pagibigLoan: selectedPayroll.pagibigLoan ?? '',
+        uploadedPayslipName: file.name,
+        uploadedPayslipPath: objectPath,
+      };
+
+      const { error: updateError } = await supabase
+        .from('payroll_items')
+        .update({
+          payslip_details: payslipDetails,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('payroll_item_id', selectedPayroll.id);
+
+      if (updateError) throw updateError;
+
+      const updated = {
+        ...selectedPayroll,
+        uploadedPayslipName: file.name,
+        uploadedPayslipPath: objectPath,
+      };
+      setSelectedPayroll(updated);
+      setPayrolls(prev => prev.map(payroll => payroll.id === selectedPayroll.id ? updated : payroll));
+      setSnackbar({ open: true, message: 'Payslip file uploaded for employee access.', severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({
+        open: true,
+        message: `Upload failed: ${e.message ?? e}. Confirm that the private "payslips" Storage bucket and access policies are configured.`,
+        severity: 'error',
+      });
+    } finally {
+      setUploadingPayslip(false);
+    }
+  };
+
+  const openUploadedPayslip = async (payroll: Payroll) => {
+    if (!payroll.uploadedPayslipPath) return;
+
+    const { data, error } = await supabase.storage
+      .from('payslips')
+      .createSignedUrl(payroll.uploadedPayslipPath, 60 * 5);
+
+    if (error || !data?.signedUrl) {
+      setSnackbar({ open: true, message: `Could not open uploaded payslip: ${error?.message ?? 'Missing file URL'}`, severity: 'error' });
+      return;
+    }
+
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handleDelete = async (id: string) => {
@@ -1998,7 +2091,33 @@ export default function PayrollComputation() {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${GREEN_UI.border}`, bgcolor: '#fbfff9', gap: 1, flexWrap: 'wrap' }}>
+          <input
+            ref={payslipUploadRef}
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx"
+            style={{ display: 'none' }}
+            onChange={handlePayslipFileUpload}
+          />
           <Button onClick={() => { setViewDialog(false); setEditingPayslip(false); }}>Close</Button>
+          {canManagePayroll && selectedPayroll && (
+            <Button
+              variant="outlined"
+              startIcon={uploadingPayslip ? <CircularProgress size={16} /> : <CloudUpload />}
+              disabled={uploadingPayslip}
+              onClick={() => payslipUploadRef.current?.click()}
+            >
+              {uploadingPayslip ? 'Uploading...' : 'Upload Payslip'}
+            </Button>
+          )}
+          {selectedPayroll?.uploadedPayslipPath && (
+            <Button
+              variant="outlined"
+              startIcon={<Download />}
+              onClick={() => openUploadedPayslip(selectedPayroll)}
+            >
+              Open Uploaded File
+            </Button>
+          )}
           {!editingPayslip ? (
             selectedPayroll?.status !== 'Released' && (
             <Button variant="outlined" color="primary"
@@ -2077,6 +2196,8 @@ export default function PayrollComputation() {
                     breakages: payslipEditForm.breakages,
                     amesco: payslipEditForm.amesco,
                     pagibigLoan: payslipEditForm.pagibigLoan,
+                    uploadedPayslipName: selectedPayroll.uploadedPayslipName ?? '',
+                    uploadedPayslipPath: selectedPayroll.uploadedPayslipPath ?? '',
                   };
 
                   const { error: updateError } = await supabase

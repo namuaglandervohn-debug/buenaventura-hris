@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 import {
   Container,
@@ -34,24 +34,38 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [selectedDemo, setSelectedDemo] = useState("");
-  const { login } = useAuth();
+  const { login, user, loading, logout } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const freshLogin = searchParams.get("fresh") === "1";
+
+  useEffect(() => {
+    if (freshLogin) {
+      logout();
+      setSearchParams({}, { replace: true });
+      return;
+    }
+
+    if (!loading && user) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [freshLogin, loading, logout, navigate, setSearchParams, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     try {
       await login(email, password);
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError("Invalid email or password");
+      setError(err instanceof Error ? err.message : "Invalid email or password");
     }
   };
 
   const demoAccounts = [
     {
-      email: "admin",
-      password: "admin123",
+      email: "hr@company.com",
+      password: "password",
       role: "HR Personnel/Admin",
     },
     {
@@ -351,8 +365,8 @@ export default function LoginPage() {
 
               <TextField
                 fullWidth
-                label="Email / Username"
-                type="text"
+                label="Email"
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 margin="normal"
@@ -375,7 +389,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 margin="normal"
                 required
-                helperText="Demo password: password"
+                helperText="Use the password configured in Supabase Auth"
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">

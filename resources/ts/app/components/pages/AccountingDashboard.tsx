@@ -370,13 +370,13 @@ export default function AccountingDashboard() {
       softColor: GREEN_UI.greenSoft,
     },
     {
-      title: 'Total Net Payable',
-      value: loading ? '…' : formatCurrency(stats.totalNetPayable),
+      title: 'Payroll Items Queued',
+      value: loading ? '...' : String(stats.payrollForReview + stats.payrollReleased),
       icon: <AccountBalanceWallet />,
       color: GREEN_UI.teal,
       softColor: '#e8f7f6',
     },
-  ], [loading, stats.payrollForReview, stats.payrollReleased, stats.totalNetPayable]);
+  ], [loading, stats.payrollForReview, stats.payrollReleased]);
 
 
   return (
@@ -686,7 +686,6 @@ export default function AccountingDashboard() {
                     <TableCell>Employee</TableCell>
                     <TableCell>Position</TableCell>
                     <TableCell>Period</TableCell>
-                    <TableCell align="right">Net Pay</TableCell>
                     <TableCell>Status</TableCell>
                   </TableRow>
                 </TableHead>
@@ -742,11 +741,6 @@ export default function AccountingDashboard() {
                           {payroll.period}
                         </Typography>
                       </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.greenDark }}>
-                          {formatCurrency(payroll.netPay)}
-                        </Typography>
-                      </TableCell>
                       <TableCell>
                         <Chip
                           label={payroll.status}
@@ -773,7 +767,7 @@ export default function AccountingDashboard() {
                   '&:hover': { bgcolor: GREEN_UI.greenDark },
                 }}
               >
-                Proceed to Salary Release
+                Proceed to Payroll Release
               </Button>
             </Box>
           </>
@@ -782,4 +776,3 @@ export default function AccountingDashboard() {
     </Box>
   );
 }
-

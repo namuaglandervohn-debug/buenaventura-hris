@@ -4,6 +4,7 @@ import {
   AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemButton,
   ListItemIcon, ListItemText, Box, IconButton, Avatar, Menu, MenuItem,
   useMediaQuery, useTheme, Divider, Chip, Tooltip, Stack, Badge, Popover, Paper, Button,
+  CircularProgress,
 } from '@mui/material';
 import {
   SpaceDashboard, PersonAddAlt1, Groups, CalendarMonth, Schedule, Assignment,
@@ -46,7 +47,7 @@ const ALL_MENU_ITEMS = [
 ];
 
 export default function RootLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
@@ -104,6 +105,14 @@ export default function RootLayout() {
 
   fetchNotifications();
 }, [user]);
+
+  if (loading) {
+    return (
+      <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: '#f2f7f3' }}>
+        <CircularProgress sx={{ color: '#1F7A47' }} />
+      </Box>
+    );
+  }
 
   // Early return AFTER all hooks
   if (!user) return <Navigate to="/login" replace />;

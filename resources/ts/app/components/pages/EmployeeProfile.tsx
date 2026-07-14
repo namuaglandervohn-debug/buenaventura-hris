@@ -1064,8 +1064,8 @@ export default function EmployeeProfile() {
                 {detailItem('Civil status', application.civilStatus || employee.civilStatus)}
                 {detailItem('Nationality', application.nationality)}
                 {detailItem('Birthplace', application.birthplace || employee.birthplace)}
-                {detailItem('Height', application.height)}
-                {detailItem('Weight', application.weight)}
+                {detailItem('Height (cm)', application.height)}
+                {detailItem('Weight(kg)', application.weight)}
                 {detailItem('Current address', application.currentAddress || employee.address, { xs: 12 })}
                 {detailItem('Permanent address', application.permanentAddress, { xs: 12 })}
               </>
@@ -1328,8 +1328,8 @@ export default function EmployeeProfile() {
                   <Grid size={{ xs: 12, md: 6 }}>{editAppField('Civil status', editApplication.civilStatus || editForm.civilStatus, (value) => updateApplicationForm({ civilStatus: value }))}</Grid>
                   <Grid size={{ xs: 12, md: 6 }}>{editAppField('Nationality', editApplication.nationality, (value) => updateApplicationForm({ nationality: value }))}</Grid>
                   <Grid size={{ xs: 12, md: 6 }}>{editAppField('Birthplace', editApplication.birthplace || editForm.birthplace, (value) => updateApplicationForm({ birthplace: value }))}</Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Height', editApplication.height, (value) => updateApplicationForm({ height: value }))}</Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Weight', editApplication.weight, (value) => updateApplicationForm({ weight: value }))}</Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Height (cm)', editApplication.height, (value) => updateApplicationForm({ height: value }))}</Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Weight(kg)', editApplication.weight, (value) => updateApplicationForm({ weight: value }))}</Grid>
                   <Grid size={12}>{editAppField('Current address', editApplication.currentAddress || editForm.address, (value) => { setEditForm({ ...editForm, address: value, applicationForm: { ...(editForm.applicationForm ?? {}), currentAddress: value } }); }, { multiline: true, rows: 2 })}</Grid>
                   <Grid size={12}>{editAppField('Permanent address', editApplication.permanentAddress, (value) => updateApplicationForm({ permanentAddress: value }), { multiline: true, rows: 2 })}</Grid>
                 </Grid>
