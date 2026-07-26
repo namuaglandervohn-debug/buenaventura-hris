@@ -486,7 +486,7 @@ export default function LandingPage() {
                   color: "#102016",
                 }}
               >
-                A workplace that feels like a place to grow.
+                A workplace that feels like a place to growww.
               </Typography>
 
               <Typography
