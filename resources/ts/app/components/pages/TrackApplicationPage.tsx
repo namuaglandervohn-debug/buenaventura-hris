@@ -33,7 +33,6 @@ import {
   MarkEmailReadOutlined,
   PhoneIphone,
   HelpOutline,
-  LockOutlined,
 } from '@mui/icons-material';
 import AuthBackground from '../AuthBackground';
 import { supabase } from '../../lib/supabaseClient';
@@ -54,7 +53,6 @@ interface ApplicationStatus {
   scheduledBy?: string;
   notes?: string;
   accountEmail?: string;
-  accountPassword?: string;
 }
 
 const STATUS_COLORS: Record<string, any> = {
@@ -159,7 +157,6 @@ export default function TrackApplicationPage() {
       }
 
       let accountEmail = '';
-      let accountPassword = '';
 
       if (data.status === 'Hired') {
         const { data: employeeData, error: employeeError } = await supabase
@@ -173,14 +170,13 @@ export default function TrackApplicationPage() {
         if (employeeData?.employee_id) {
           const { data: accountData, error: accountError } = await supabase
             .from('user_accounts')
-            .select('email, password')
+            .select('email')
             .eq('employee_id', employeeData.employee_id)
             .maybeSingle();
 
           if (accountError) throw accountError;
 
           accountEmail = accountData?.email ?? '';
-          accountPassword = accountData?.password ?? '';
         }
       }
 
@@ -199,7 +195,6 @@ export default function TrackApplicationPage() {
         scheduledBy: data.scheduled_by ?? '',
         notes: data.notes ?? '',
         accountEmail,
-        accountPassword,
       });
     } catch (e: any) {
       setError(`Could not retrieve application: ${e.message}`);
@@ -558,22 +553,13 @@ export default function TrackApplicationPage() {
                       </Grid>
 
                       {applicationData.status === 'Hired' && (
-                        <>
-                          <Grid size={{ xs: 12, md: 6 }}>
-                            <InfoCard
-                              icon={<MarkEmailReadOutlined />}
-                              label="Employee Login Email"
-                              value={applicationData.accountEmail || 'Account email is not yet available'}
-                            />
-                          </Grid>
-                          <Grid size={{ xs: 12, md: 6 }}>
-                            <InfoCard
-                              icon={<LockOutlined />}
-                              label="Temporary Password"
-                              value={applicationData.accountPassword || 'Temporary password is not yet available'}
-                            />
-                          </Grid>
-                        </>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <InfoCard
+                            icon={<MarkEmailReadOutlined />}
+                            label="Employee Login Email"
+                            value={applicationData.accountEmail || 'Account email is not yet available'}
+                          />
+                        </Grid>
                       )}
 
                       {/* ── Interview Schedule — shown only when status is "For Interview" ── */}

@@ -752,9 +752,9 @@ function buildAttendancePayload(row: Partial<Attendance>, employee: EmployeeOpti
   const discrepancy = getAttendanceDiscrepancy({
     ...row,
     status,
-    late: lateMinutes,
-    undertime: undertimeMinutes,
-    overtime: overtimeMinutes,
+    late: String(lateMinutes),
+    undertime: String(undertimeMinutes),
+    overtime: String(overtimeMinutes),
     is_absent: isAbsent,
   });
   const needsReview = needsAttendanceReview(discrepancy);

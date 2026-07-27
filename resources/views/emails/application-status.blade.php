@@ -6,7 +6,7 @@
 </head>
 @php
     $flow = ['Submitted', 'Under Review', 'Missing Requirements', 'For Interview', 'Hired'];
-    $terminalStatuses = ['Not Qualified', 'Not Hired', 'Archived'];
+    $terminalStatuses = ['Not Qualified', 'Archived'];
     if (in_array($status, $terminalStatuses, true)) {
         $flow = ['Submitted', 'Under Review', 'Missing Requirements', $status];
     }
@@ -22,10 +22,9 @@
         'For Interview' => 'You are scheduled or being prepared for interview.',
         'Hired' => 'Your application has been approved for hiring.',
         'Not Qualified' => 'Sorry, your application did not qualify for the current opening.',
-        'Not Hired' => 'Your application was not selected for hiring.',
         'Archived' => 'Your applicant requirements are currently on hold and archived for review.',
     ];
-    $terminalRedStatuses = ['Not Qualified', 'Not Hired'];
+    $terminalRedStatuses = ['Not Qualified'];
 @endphp
 <body style="margin:0;padding:0;background:#f2fbf4;font-family:Arial,Helvetica,sans-serif;color:#1f2d24;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f2fbf4;padding:24px 0;">

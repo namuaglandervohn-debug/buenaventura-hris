@@ -425,8 +425,8 @@ export default function PayrollComputation() {
       breakages: details.breakages ?? '',
       amesco: details.amesco ?? '',
       pagibigLoan: details.pagibigLoan ?? '',
-      uploadedPayslipName: details.uploadedPayslipName ?? '',
-      uploadedPayslipPath: details.uploadedPayslipPath ?? '',
+      uploadedPayslipName: item.uploaded_file_name ?? details.uploadedPayslipName ?? '',
+      uploadedPayslipPath: item.uploaded_file_path ?? details.uploadedPayslipPath ?? '',
     };
   };
 
@@ -471,6 +471,10 @@ export default function PayrollComputation() {
           net_pay,
           remarks,
           payslip_details,
+          uploaded_file_path,
+          uploaded_file_name,
+          uploaded_file_mime_type,
+          uploaded_at,
           created_at,
           updated_at
         `)
@@ -1027,6 +1031,10 @@ export default function PayrollComputation() {
         .from('payroll_items')
         .update({
           payslip_details: payslipDetails,
+          uploaded_file_path: objectPath,
+          uploaded_file_name: file.name,
+          uploaded_file_mime_type: file.type || 'application/octet-stream',
+          uploaded_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq('payroll_item_id', selectedPayroll.id);

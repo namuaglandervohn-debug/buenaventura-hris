@@ -76,7 +76,6 @@ type AppStatus =
   | 'For Interview'
   | 'Hired'
   | 'Not Qualified'
-  | 'Not Hired'
   | 'Archived';
 
 interface Application {
@@ -156,7 +155,6 @@ const STATUS_COLORS: Record<AppStatus, 'default' | 'primary' | 'warning' | 'info
   'For Interview': 'info',
   Hired: 'success',
   'Not Qualified': 'error',
-  'Not Hired': 'error',
   Archived: 'default',
 };
 
@@ -228,7 +226,6 @@ const statusChipSx = (status: AppStatus) => {
     'For Interview': { bg: '#e9f6ff', color: '#1d6f9c', border: '#b7dff7' },
     Hired: { bg: '#e5f8e9', color: '#217a43', border: '#a9dfb6' },
     'Not Qualified': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
-    'Not Hired': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
     Archived: { bg: '#f4f1e8', color: '#7a5b1f', border: '#dfcfa9' },
   };
 
@@ -734,7 +731,7 @@ export default function RecruitmentManagement() {
     setError(null);
 
     try {
-      let { data, error: fetchError } = await withTimeout(
+      let { data, error: fetchError }: { data: any[] | null; error: any } = await withTimeout(
         supabase.from('applicants').select(APPLICANT_LIST_COLUMNS).order('created_at', { ascending: true }),
         15000,
         'Loading applications took too long. Please check your connection and try again.'
@@ -812,7 +809,9 @@ export default function RecruitmentManagement() {
 
     if (!response.ok) {
       const body = await response.json().catch(() => null);
-      throw new Error(body?.message || 'Unable to send application status email.');
+      const resendDetail = body?.resend_message || body?.resend_error || body?.error;
+      const resendStatus = body?.resend_status ? `Resend ${body.resend_status}: ` : '';
+      throw new Error(`${resendStatus}${resendDetail || body?.message || 'Unable to send application status email.'}`);
     }
   };
 
@@ -1315,9 +1314,7 @@ export default function RecruitmentManagement() {
         app.email,
         app.phone,
         app.status,
-        app.date,
         app.interviewDate,
-        app.hearAbout,
       ].some(value => String(value ?? '').toLowerCase().includes(query))
     );
   }, [applications, archiveView, search]);
@@ -1331,7 +1328,6 @@ export default function RecruitmentManagement() {
       { label: 'For Interview', data: searchedApplications.filter(a => a.status === 'For Interview') },
       { label: 'Hired', data: searchedApplications.filter(a => a.status === 'Hired') },
       { label: 'Not Qualified', data: searchedApplications.filter(a => a.status === 'Not Qualified') },
-      { label: 'Not Hired', data: searchedApplications.filter(a => a.status === 'Not Hired') },
       { label: 'Archived', data: searchedApplications.filter(a => a.status === 'Archived') },
     ],
     [searchedApplications]

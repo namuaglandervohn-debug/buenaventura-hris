@@ -32,6 +32,28 @@ function validateRecipientEmailAddress(string $email, string $field = 'email'): 
     return $normalizedEmail;
 }
 
+function resendFailurePayload(mixed $responseBody, int $status, string $fallbackMessage): array
+{
+    $resendMessage = null;
+    $resendError = null;
+
+    if (is_array($responseBody)) {
+        $resendMessage = $responseBody['message'] ?? null;
+        $resendError = $responseBody['error'] ?? $responseBody['name'] ?? null;
+    } elseif (is_string($responseBody) && trim($responseBody) !== '') {
+        $resendMessage = trim($responseBody);
+    }
+
+    $detail = $resendMessage ?: $resendError;
+
+    return [
+        'message' => $detail ? "{$fallbackMessage} Resend said: {$detail}" : $fallbackMessage,
+        'resend_status' => $status,
+        'resend_message' => $resendMessage,
+        'resend_error' => $resendError,
+    ];
+}
+
 function supabaseBaseUrl(): string
 {
     $url = rtrim((string) config('services.supabase.url'), '/');
@@ -485,10 +507,11 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
             'body' => $responseBody,
         ]);
 
-        return response()->json([
-            'message' => 'Applicant ID could not be sent. Please check that buenaventura-hris.me is verified in Resend.',
-            'resend_status' => $response->status(),
-        ], 502);
+        return response()->json(resendFailurePayload(
+            $responseBody,
+            $response->status(),
+            'Applicant ID could not be sent.'
+        ), 502);
     }
 
     return response()->json([
@@ -576,10 +599,11 @@ Route::post('/applications/send-status-email', function (Request $request) {
             'body' => $responseBody,
         ]);
 
-        return response()->json([
-            'message' => 'Application status email could not be sent. Please check that buenaventura-hris.me is verified in Resend.',
-            'resend_status' => $response->status(),
-        ], 502);
+        return response()->json(resendFailurePayload(
+            $responseBody,
+            $response->status(),
+            'Application status email could not be sent.'
+        ), 502);
     }
 
     return response()->json([
@@ -654,10 +678,11 @@ Route::post('/applications/send-hired-credentials-email', function (Request $req
             'body' => $responseBody,
         ]);
 
-        return response()->json([
-            'message' => 'Employee credentials could not be sent. Please check that buenaventura-hris.me is verified in Resend.',
-            'resend_status' => $response->status(),
-        ], 502);
+        return response()->json(resendFailurePayload(
+            $responseBody,
+            $response->status(),
+            'Employee credentials could not be sent.'
+        ), 502);
     }
 
     return response()->json([

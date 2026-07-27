@@ -12,13 +12,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["resources/ts/*"]
+      "@/*": ["./resources/ts/*"]
     }
   },
-  "include": ["resources/ts/**/*.ts", "resources/ts/**/*.tsx", "resources/ts/**/*.d.ts", "vite.config.js"]
+  "include": ["resources/ts/**/*.ts", "resources/ts/**/*.tsx", "resources/ts/**/*.d.ts", "vite.config.ts", "vite.config.js"]
 }

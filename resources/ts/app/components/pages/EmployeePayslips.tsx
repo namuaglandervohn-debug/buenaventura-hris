@@ -175,8 +175,8 @@ const mapItemToPayslip = (item: any, summariesById: Map<string, any>, displayId?
     breakages: details.breakages ?? '',
     amesco: details.amesco ?? '',
     pagibigLoan: details.pagibigLoan ?? '',
-    uploadedPayslipName: details.uploadedPayslipName ?? '',
-    uploadedPayslipPath: details.uploadedPayslipPath ?? '',
+    uploadedPayslipName: item.uploaded_file_name ?? details.uploadedPayslipName ?? '',
+    uploadedPayslipPath: item.uploaded_file_path ?? details.uploadedPayslipPath ?? '',
   };
 };
 
@@ -402,6 +402,10 @@ export default function EmployeePayslips() {
           net_pay,
           remarks,
           payslip_details,
+          uploaded_file_path,
+          uploaded_file_name,
+          uploaded_file_mime_type,
+          uploaded_at,
           created_at,
           updated_at
         `)

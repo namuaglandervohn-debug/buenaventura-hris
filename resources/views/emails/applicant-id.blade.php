@@ -63,7 +63,7 @@
                                             <table role="presentation" cellspacing="0" cellpadding="0">
                                                 <tr>
                                                     <td align="center" style="width:28px;height:28px;border-radius:50%;background:{{ $circleBg }};color:{{ $circleColor }};font-size:16px;font-weight:bold;line-height:28px;">
-                                                        {{ $isDone ? '✓' : '' }}
+                                                        {!! $isDone ? '&#10003;' : '' !!}
                                                     </td>
                                                 </tr>
                                                 @if (! $loop->last)
