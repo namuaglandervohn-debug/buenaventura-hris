@@ -54,7 +54,6 @@ const REPORT_TYPES: ReportType[] = [
   { value: 'attendanceLogs', label: 'Attendance Logs', icon: <GridView /> },
   { value: 'payroll', label: 'Payroll Summary', icon: <GridView /> },
   { value: 'evaluations', label: 'Performance Evaluations', icon: <BarChartIcon /> },
-  { value: 'dss', label: 'Performance Rankings', icon: <BarChartIcon /> },
   { value: 'requests', label: 'Leave / OT / Undertime Requests', icon: <GridView /> },
   { value: 'criteria', label: 'Evaluation Criteria & Weights', icon: <BarChartIcon /> },
   { value: 'systemLogs', label: 'System Logs', icon: <GridView /> },
@@ -106,7 +105,6 @@ const COLUMNS: Record<string, string[]> = {
     'status',
   ],
   evaluations: ['id', 'employee', 'position', 'outlet', 'period', 'rawScore', 'finalScore', 'rating', 'status'],
-  dss: ['rank', 'employee', 'position', 'outlet', 'period', 'finalScore', 'rating', 'recommendation'],
   requests: ['id', 'employee', 'type', 'leaveType', 'date', 'time', 'reason', 'status', 'reviewerRemarks'],
   criteria: ['id', 'criteriaName', 'category', 'weight', 'maxScore', 'active', 'description'],
   systemLogs: ['id', 'userName', 'userRole', 'action', 'module', 'recordTable', 'description', 'date'],
@@ -254,7 +252,7 @@ const labelize = (key: string) =>
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, s => s.toUpperCase())
     .replace('Id', 'ID')
-    .replace('Dss', 'Ranking');
+    .trim();
 
 const getStatusColor = (value: any) => {
   const status = String(value ?? '').toLowerCase();
@@ -335,8 +333,6 @@ export default function Reports() {
         requests,
         criteria,
         evaluations,
-        dssResults,
-        dssItems,
         systemLogs,
         userAccounts,
       ] = await Promise.all([
@@ -350,8 +346,6 @@ export default function Reports() {
         safe('employee_requests', 'created_at'),
         safe('evaluation_criteria', 'created_at'),
         safe('employee_evaluations', 'created_at'),
-        safe('dss_results', 'created_at'),
-        safe('dss_result_items', 'rank_no'),
         safe('system_logs', 'created_at'),
         safe('user_accounts'),
       ]);
@@ -366,9 +360,6 @@ export default function Reports() {
 
       const payrollById = new Map<string, any>();
       payrollSummaries.forEach((p: any) => payrollById.set(p.payroll_id, p));
-
-      const dssById = new Map<string, any>();
-      dssResults.forEach((d: any) => dssById.set(d.result_id, d));
 
       const map: ReportData = {
         employees: employees.map((e: any) => ({
@@ -476,23 +467,6 @@ export default function Reports() {
           status: e.status || 'Draft',
           date: toDateOnly(e.evaluation_period_start),
         })),
-
-        dss: dssItems.map((item: any) => {
-          const result = dssById.get(item.result_id);
-          const emp = item.employee_id ? employeeById.get(item.employee_id) : null;
-          return {
-            rank: item.rank_no,
-            employee: `${item.employee_id}${item.employee_name || emp ? ` - ${item.employee_name || getFullName(emp)}` : ''}`,
-            position: item.position || emp?.position || '—',
-            outlet: firstFilled(emp?.outlet, item.outlet) || '—',
-            period: buildPeriod(result?.result_period_start, result?.result_period_end, result?.result_period_label),
-            finalScore: item.final_weighted_score ?? 0,
-            rating: item.rating_label || '—',
-            recommendation: item.recommendation || '—',
-            date: toDateOnly(result?.result_period_start || item.created_at),
-          };
-        }),
-
         requests: requests.map((r: any) => ({
           id: r.request_id,
           employee: `${r.employee_id || '—'}${employeeById.get(r.employee_id) ? ` - ${getFullName(employeeById.get(r.employee_id))}` : ''}`,

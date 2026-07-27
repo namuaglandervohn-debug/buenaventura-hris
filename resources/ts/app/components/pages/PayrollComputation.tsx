@@ -270,6 +270,16 @@ const getMonthRange = (monthValue: string) => {
 const monthFromDate = (dateValue?: string | null) =>
   dateValue ? dateValue.slice(0, 7) : new Date().toISOString().slice(0, 7);
 
+const formatMonthLabel = (monthValue: string) => {
+  if (!monthValue) return 'the selected month';
+  const [year, month] = monthValue.split('-').map(Number);
+  if (!year || !month) return monthValue;
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+};
+
 const parsePayslipDetails = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== 'object') return {};
   return value as Record<string, string>;
@@ -565,6 +575,31 @@ export default function PayrollComputation() {
     }));
   };
 
+  const latestAttendanceMonth = async () => {
+    const { data, error } = await supabase
+      .from('attendance_logs')
+      .select('attendance_date')
+      .not('employee_id', 'is', null)
+      .not('attendance_date', 'is', null)
+      .order('attendance_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.attendance_date ? String(data.attendance_date).slice(0, 7) : '';
+  };
+
+  const openGenerateDialog = async () => {
+    try {
+      const latestMonth = await latestAttendanceMonth();
+      if (latestMonth) setGeneratePeriod(latestMonth);
+    } catch (e: any) {
+      console.warn('Could not detect latest attendance month:', e?.message ?? e);
+    } finally {
+      setGenerateDialog(true);
+    }
+  };
+
   const handleAdd = async () => {
     if (!form.employee || !form.grossPay) {
       setSnackbar({ open: true, message: 'Please enter an Employee ID and Gross Pay.', severity: 'error' });
@@ -666,7 +701,11 @@ export default function PayrollComputation() {
 
       if (logsError) throw logsError;
       if (!attendanceLogs || attendanceLogs.length === 0) {
-        throw new Error('No attendance logs were found for the selected payroll period. Save/import attendance in Attendance Monitoring first, then generate payroll again.');
+        const latestMonth = await latestAttendanceMonth();
+        const latestHint = latestMonth
+          ? ` Latest saved attendance is for ${formatMonthLabel(latestMonth)}.`
+          : '';
+        throw new Error(`No attendance logs were found for ${formatMonthLabel(generatePeriod)}.${latestHint} Choose a payroll period with saved Attendance Monitoring records, then generate payroll again.`);
       }
 
       const employeeIds = [...new Set(attendanceLogs.map((log: any) => String(log.employee_id)).filter(Boolean))];
@@ -1382,7 +1421,7 @@ export default function PayrollComputation() {
                 <Button
                   variant="contained"
                   startIcon={<Calculate />}
-                  onClick={() => setGenerateDialog(true)}
+                  onClick={openGenerateDialog}
                   sx={{
                     ...pillButtonSx,
                     py: 1.1,

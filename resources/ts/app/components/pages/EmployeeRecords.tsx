@@ -50,6 +50,7 @@ import {
 } from "@mui/icons-material";
 import ActionSnackbar from "../ActionSnackbar";
 import { supabase } from "../../lib/supabaseClient";
+import { nextEmployeeId } from "../../lib/employeeIds";
 import {
   OUTLETS,
   POSITIONS,
@@ -291,12 +292,7 @@ export default function EmployeeRecords() {
   setSaving(true);
 
   try {
-    const { count } = await supabase
-      .from("employees")
-      .select("*", { count: "exact", head: true });
-
-    const nextNumber = String((count ?? 0) + 1).padStart(4, "0");
-    const employeeIdGenerated = `EMP-2026-${nextNumber}`;
+    const employeeIdGenerated = await nextEmployeeId();
 
     const nameParts = form.name.trim().split(" ");
     const firstName = nameParts[0] ?? "";

@@ -60,6 +60,7 @@ import {
 } from '@mui/material';
 import { useAuth } from '../../context/AuthContext';
 import ActionSnackbar from '../ActionSnackbar';
+import { nextEmployeeId } from '../../lib/employeeIds';
 
 interface DocFile {
   name: string;
@@ -1111,12 +1112,7 @@ export default function RecruitmentManagement() {
       let employeeId = existingEmployee?.employee_id as string | undefined;
 
       if (!employeeId) {
-        const { count: employeeCount, error: countError } = await supabase
-          .from('employees')
-          .select('*', { count: 'exact', head: true });
-
-        if (countError) throw countError;
-        employeeId = `EMP-2026-${String((employeeCount ?? 0) + 1).padStart(4, '0')}`;
+        employeeId = await nextEmployeeId();
       }
 
       const employeePayload = {

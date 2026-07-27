@@ -251,42 +251,6 @@ const fetchOnDutyOrOnCallCount = async (): Promise<number> => {
 const fetchTopPerformer = async (): Promise<
   Pick<Stats, "topEvaluee" | "topScore">
 > => {
-  const dssRows = await fetchRows(
-    "dss_results",
-    "id, result_id, top_employee_name, highest_score, status, result_period_end, created_at",
-    { column: "result_period_end", ascending: false },
-  );
-
-  const latestPublishedDss =
-    dssRows.find((row) =>
-      ["approved", "exported", "reviewed"].includes(normalizeText(row.status)),
-    ) ?? dssRows.find((row) => String(row.top_employee_name ?? "").trim());
-
-  if (latestPublishedDss?.top_employee_name) {
-    return {
-      topEvaluee: String(latestPublishedDss.top_employee_name).trim(),
-      topScore: toNumber(latestPublishedDss.highest_score),
-    };
-  }
-
-  const topRankedItems = await fetchRows(
-    "dss_result_items",
-    "id, item_id, employee_name, final_weighted_score, rank_no, created_at",
-    { column: "created_at", ascending: false },
-  );
-
-  const topRankedItem = topRankedItems.find(
-    (row) =>
-      toNumber(row.rank_no) === 1 && String(row.employee_name ?? "").trim(),
-  );
-
-  if (topRankedItem) {
-    return {
-      topEvaluee: String(topRankedItem.employee_name).trim(),
-      topScore: toNumber(topRankedItem.final_weighted_score),
-    };
-  }
-
   const evaluationRows = await fetchRows(
     "employee_evaluations",
     "id, evaluation_id, employee_name, employee_id, final_weighted_score, status, updated_at",
@@ -518,16 +482,6 @@ export default function HRDashboard() {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "dss_results" },
-        scheduleSilentRefresh,
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "dss_result_items" },
-        scheduleSilentRefresh,
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "employee_evaluations" },
         scheduleSilentRefresh,
       )
@@ -607,7 +561,7 @@ export default function HRDashboard() {
         icon: <EmojiEvents />,
         color: "#B98913",
         softColor: "#FFF4D8",
-        helper: "Latest performance ranking result",
+        helper: "Highest recorded evaluation score",
       },
     ],
     [loading, stats],
@@ -721,7 +675,7 @@ export default function HRDashboard() {
               }}
             >
               Welcome to Buenaventura Estate HRIS. Monitor employees,
-              applications, requests, attendance, payroll, and performance rankings
+              applications, requests, attendance, payroll, and performance evaluations
               in one clean workspace.
             </Typography>
           </Box>
@@ -820,8 +774,8 @@ export default function HRDashboard() {
             size={{
               xs: 12,
               sm: 6,
-              md: index === 6 ? 6 : 4,
-              lg: index === 6 ? 6 : 3,
+              md: 4,
+              lg: 3,
             }}
             sx={{ display: "flex" }}
           >
@@ -877,8 +831,8 @@ export default function HRDashboard() {
                       sx={{
                         color: GREEN_UI.text,
                         fontSize: {
-                          xs: index === 6 ? "1.25rem" : "2rem",
-                          md: index === 6 ? "1.45rem" : "2.25rem",
+                          xs: "2rem",
+                          md: "2.25rem",
                         },
                         lineHeight: 1.04,
                         overflow: "hidden",

@@ -18,6 +18,7 @@ import {
   DoneAll,
   EditOutlined as EditIcon,
   EventAvailable,
+  Image,
   InsertDriveFile,
   ManageSearch,
   PersonOutline,
@@ -90,14 +91,210 @@ const SHIFT_PRESETS = [
 ];
 
 const BREAK_TIME_OPTIONS = ['30 minutes', '1 hour', '1 hour 30 minutes', '2 hours'];
-const ASSIGNED_WORK_AREAS = ['Maria Clara Resort', 'Maria Clara Restaurant', 'Café Buenaventura'];
+const PHOTO_SCHEDULE_WEEK = 'May 11-17, 2026';
+const PHOTO_SCHEDULE_ROWS = [
+  {
+    name: 'Diether Raganit',
+    position: 'Supervisor',
+    outlet: 'Maria Clara Resort',
+    monday: 'RD',
+    tuesday: '9:00 AM - 7:00 PM / 5:00 PM - 9:00 PM',
+    wednesday: 'FLEX',
+    thursday: '9:00 AM - 1:00 PM / 5:00 PM - 9:00 PM',
+    friday: '9:00 AM - 1:00 PM / 5:00 PM - 9:00 PM',
+    saturday: '9:00 AM - 1:00 PM / 5:00 PM - 9:00 PM',
+    sunday: '7:00 AM - 10:00 PM / 5:00 PM - 9:00 PM',
+  },
+  {
+    name: 'Yurine Guanzon',
+    position: 'Leadman',
+    outlet: 'Buenaventura Cafe',
+    monday: '2:00 PM - 5:00 PM / 6:00 PM - 12:00 AM',
+    tuesday: '2:00 PM - 5:00 PM / 6:00 PM - 11:00 PM',
+    wednesday: 'RD',
+    thursday: '1:00 PM - 4:00 PM / 6:00 PM - 11:00 PM',
+    friday: '2:00 PM - 5:00 PM / 6:00 PM - 11:00 PM',
+    saturday: '2:00 PM - 5:00 PM / 6:00 PM - 12:00 AM',
+    sunday: '1:00 PM - 2:00 PM / 6:00 PM - 12:00 AM',
+  },
+  {
+    name: 'Christian Tejadillo',
+    position: 'Server',
+    outlet: 'Buenaventura Cafe',
+    monday: '11:00 AM - 7:00 PM / 2:00 PM - 8:00 PM',
+    tuesday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    wednesday: '2:00 PM - 5:00 PM / 6:00 PM - 10:00 PM',
+    thursday: 'RD',
+    friday: '9:00 AM - 2:00 PM / 6:00 PM - 9:00 PM',
+    saturday: '11:00 AM - 6:30 PM',
+    sunday: '12:30 PM - 8:30 PM',
+  },
+  {
+    name: 'Jilly John Jardinico',
+    position: 'Server',
+    outlet: 'Buenaventura Cafe',
+    monday: '5:00 AM - 2:00 PM / 5:00 PM - 8:00 PM',
+    tuesday: '5:00 AM - 2:00 PM / 5:00 PM - 8:00 PM',
+    wednesday: '12:00 PM - 8:00 PM',
+    thursday: '9:00 AM - 1:00 PM / 5:00 PM - 9:00 PM',
+    friday: 'RD',
+    saturday: '9:00 AM - 1:00 PM / 6:00 PM - 9:00 PM',
+    sunday: '9:00 AM - 3:00 PM / 5:00 PM - 9:00 PM',
+  },
+  {
+    name: 'Romel Cancio',
+    position: 'Leadman',
+    outlet: 'Maria Clara Restaurant',
+    monday: 'RD',
+    tuesday: '11:00 AM - 2:00 PM / 6:00 PM - 9:00 PM',
+    wednesday: '11:00 AM - 2:00 PM / 4:00 PM - 10:00 PM',
+    thursday: '11:00 AM - 2:00 PM / 6:00 PM - 9:00 PM',
+    friday: '11:00 AM - 2:00 PM / 6:00 PM - 9:00 PM',
+    saturday: '11:00 AM - 3:00 PM',
+    sunday: '11:00 AM - 3:00 PM',
+  },
+  {
+    name: 'Christian Dave Baon',
+    position: 'Server',
+    outlet: 'Maria Clara Restaurant',
+    monday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    tuesday: 'RD',
+    wednesday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    thursday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    friday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    saturday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+    sunday: '1:00 PM - 4:00 PM / 5:00 PM - 10:00 PM',
+  },
+  {
+    name: 'Kio M.',
+    position: 'Server',
+    outlet: 'Maria Clara Restaurant',
+    monday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+    tuesday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+    wednesday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+    thursday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+    friday: 'RD',
+    saturday: 'RD',
+    sunday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+  },
+  {
+    name: 'Cheryl Monil',
+    position: 'Cashier',
+    outlet: 'Maria Clara Restaurant',
+    monday: 'SUSPENDED',
+    tuesday: 'SUSPENDED',
+    wednesday: 'SUSPENDED',
+    thursday: 'SUSPENDED',
+    friday: 'SUSPENDED',
+    saturday: '1:30 PM - 4:00 PM',
+    sunday: '1:30 PM - 12:00 AM',
+  },
+  {
+    name: 'Jhon Lloyd Reyes',
+    position: 'Leadman',
+    outlet: 'Pool Bar',
+    monday: '2:00 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    tuesday: '2:30 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    wednesday: '2:30 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    thursday: 'RD',
+    friday: '2:30 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    saturday: '2:30 PM - 4:00 PM / 6:00 PM - 11:00 PM',
+    sunday: '2:30 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+  },
+  {
+    name: 'Stephen Ker Caliston',
+    position: 'Server',
+    outlet: 'Pool Bar',
+    monday: '11:00 AM - 2:00 PM / 5:00 PM - 9:00 PM',
+    tuesday: '2:00 PM - 6:00 PM / 7:00 PM - 11:00 PM',
+    wednesday: '11:30 AM - 2:00 PM / 3:00 PM - 9:00 PM',
+    thursday: '2:00 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    friday: 'RD',
+    saturday: '2:00 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    sunday: '9:30 PM - 5:00 AM',
+  },
+  {
+    name: 'John Louie Del Gako',
+    position: 'Server',
+    outlet: 'Pool Bar',
+    monday: '2:00 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    tuesday: '1:00 PM - 4:00 PM / 5:00 PM - 11:00 PM',
+    wednesday: '3:00 PM - 4:00 PM / 5:00 PM - 11:00 PM',
+    thursday: '2:00 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+    friday: '11:00 AM - 2:00 PM / 4:00 PM - 8:00 PM',
+    saturday: '7:30 PM - 3:00 AM',
+    sunday: 'RD',
+  },
+  {
+    name: 'Rogie Lopez',
+    position: 'Events Head',
+    outlet: 'Pool Bar',
+    monday: 'SUSPENDED',
+    tuesday: 'SUSPENDED',
+    wednesday: 'SUSPENDED',
+    thursday: 'RD',
+    friday: '2:00 PM - 4:00 PM / 5:00 PM - 11:00 PM',
+    saturday: '2:00 PM - 4:00 PM / 6:00 PM - 11:00 PM',
+    sunday: '2:00 PM - 4:00 PM / 5:00 PM - 11:00 PM',
+  },
+  {
+    name: 'Cristen Albert',
+    position: 'Cashier',
+    outlet: 'Pool Bar',
+    monday: 'RD',
+    tuesday: '1:30 PM - 4:00 PM / 4:00 PM - 10:00 PM',
+    wednesday: '8:30 PM - 4:00 AM / 4:00 PM - 11:00 PM',
+    thursday: '2:00 PM - 5:00 PM / 6:00 PM - 11:00 PM',
+    friday: '3:00 PM - 4:00 PM / 5:00 PM - 11:00 PM',
+    saturday: 'RD',
+    sunday: '1:30 PM - 6:00 PM / 6:00 PM - 11:00 PM',
+  },
+  {
+    name: 'Jayson Onrubia',
+    position: 'Reliever',
+    outlet: 'Pool Bar',
+    monday: '2:00 PM - 6:00 PM / 6:00 PM - 12:00 AM',
+    tuesday: 'RD',
+    wednesday: '9:00 AM - 3:00 PM / 5:00 PM - 9:00 PM',
+    thursday: '11:30 AM - 2:00 PM',
+    friday: '6:00 PM - 12:00 AM / 1:00 AM - 3:00 AM',
+    saturday: '6:00 AM - 12:00 PM / 1:00 PM - 3:00 PM',
+    sunday: 'RD',
+  },
+] as const;
+const ASSIGNED_WORK_AREAS = ['Maria Clara Resort', 'Maria Clara Restaurant', 'Buenaventura Cafe'];
 const normalizeWorkArea = (value?: string | null) => {
   const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'buenaventura café' || normalized === 'buenaventura cafe' || normalized === 'cafe buenaventura') {
-    return 'café buenaventura';
+  if (
+    normalized === 'buenaventura caf?' ||
+    normalized === 'buenaventura café' ||
+    normalized === 'buenaventura cafe' ||
+    normalized === 'cafe buenaventura'
+  ) {
+    return 'buenaventura cafe';
   }
   return normalized;
 };
+
+const displayWorkArea = (value?: string | null) =>
+  normalizeWorkArea(value) === 'buenaventura cafe'
+    ? 'Buenaventura Cafe'
+    : String(value ?? '').trim();
+
+const normalizePersonName = (value?: string | null) =>
+  String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const sortSchedulesByEmployeeName = (rows: Schedule[]) =>
+  [...rows].sort((a, b) =>
+    String(a.employee || '').localeCompare(String(b.employee || ''), undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    })
+  );
 
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
@@ -222,7 +419,6 @@ export default function ScheduleManagement() {
   const [filterOutlet, setFilterOutlet] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedScheduleIds, setSelectedScheduleIds] = useState<string[]>([]);
-  const [bulkStatus, setBulkStatus] = useState<Schedule['status']>('Published');
   const [editDialog, setEditDialog] = useState(false);
   const [editRecord, setEditRecord] = useState<Schedule | null>(null);
   const [editForm, setEditForm] = useState(EMPTY);
@@ -237,7 +433,9 @@ export default function ScheduleManagement() {
   outlet: string;
 }[]>([]);
   const excelRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const [importingExcel, setImportingExcel] = useState(false);
+  const [importingImage, setImportingImage] = useState(false);
 
   const currentRole = String((user as any)?.role ?? '').toLowerCase();
   const currentEmployeeId = String((user as any)?.employee_id ?? (user as any)?.employeeId ?? '');
@@ -320,7 +518,7 @@ export default function ScheduleManagement() {
       employeeId: s.employee_id ?? "",
       employee: employeeMap.get(s.employee_id)?.name ?? "—",
       position: employeeMap.get(s.employee_id)?.position || s.position || "",
-      outlet: employeeMap.get(s.employee_id)?.outlet || s.outlet || "",
+      outlet: displayWorkArea(employeeMap.get(s.employee_id)?.outlet || s.outlet || ""),
       week: s.week ?? "",
       timeIn: s.time_in ?? "",
       timeOut: s.time_out ?? "",
@@ -339,7 +537,7 @@ export default function ScheduleManagement() {
       declinedAt: s.declined_at ?? "",
     }));
 
-    setSchedules(mappedSchedules);
+    setSchedules(sortSchedulesByEmployeeName(mappedSchedules));
   } catch (e: any) {
     setError(`Could not load schedules: ${e.message}`);
   } finally {
@@ -613,6 +811,42 @@ export default function ScheduleManagement() {
   }
 };
 
+  const handleDeleteSelected = async () => {
+    if (selectedScheduleIds.length === 0) {
+      setSnackbar({ open: true, message: "Select at least one schedule to delete.", severity: "error" });
+      return;
+    }
+
+    if (!window.confirm(`Delete ${selectedScheduleIds.length} selected schedule(s)? This cannot be undone.`)) return;
+
+    setSaving(true);
+    try {
+      const idsToDelete = [...selectedScheduleIds];
+      const { error } = await supabase
+        .from("schedule")
+        .delete()
+        .in("schedule_id", idsToDelete);
+
+      if (error) throw error;
+
+      setSchedules(prev => prev.filter(schedule => !idsToDelete.includes(schedule.id)));
+      setSelectedScheduleIds([]);
+      setSnackbar({
+        open: true,
+        message: `Deleted ${idsToDelete.length} selected schedule(s).`,
+        severity: "success",
+      });
+    } catch (e: any) {
+      setSnackbar({
+        open: true,
+        message: `Delete selected schedules failed: ${e.message ?? e}`,
+        severity: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openEditDialog = (s: Schedule) => {
     const linkedEmployee = getEmployeeById(s.employeeId);
     setEditRecord(s);
@@ -739,7 +973,7 @@ export default function ScheduleManagement() {
     );
   };
 
-  const applyBulkStatusUpdate = async () => {
+  const publishSelectedSchedules = async () => {
     if (selectedScheduleIds.length === 0) {
       setSnackbar({ open: true, message: 'Select at least one schedule to update.', severity: 'error' });
       return;
@@ -747,51 +981,35 @@ export default function ScheduleManagement() {
 
     setSaving(true);
     try {
-      const updatePayload: Record<string, any> = { status: bulkStatus };
-      if (bulkStatus === 'Confirmed') {
-        updatePayload.confirmed_by = currentUserName;
-        updatePayload.confirmed_at = new Date().toISOString();
-      }
-      if (bulkStatus === 'Declined') {
-        updatePayload.declined_by = currentUserName;
-        updatePayload.declined_at = new Date().toISOString();
-      }
-
       const { error } = await supabase
         .from('schedule')
-        .update(updatePayload)
+        .update({ status: 'Published' })
         .in('schedule_id', selectedScheduleIds);
 
       if (error) throw error;
 
       const selectedRecords = schedules.filter(schedule => selectedScheduleIds.includes(schedule.id));
-      if (bulkStatus === 'Published') {
-        await Promise.all(selectedRecords.map(schedule =>
-          pushNotification(
-            schedule.employeeId,
-            'New Schedule Published',
-            `Your schedule for ${schedule.week} has been published.`,
-            'schedule'
-          )
-        ));
-      }
+      await Promise.all(selectedRecords.map(schedule =>
+        pushNotification(
+          schedule.employeeId,
+          'New Schedule Published',
+          `Your schedule for ${schedule.week} has been published.`,
+          'schedule'
+        )
+      ));
 
       setSchedules(prev => prev.map(schedule =>
         selectedScheduleIds.includes(schedule.id)
           ? {
               ...schedule,
-              status: bulkStatus,
-              confirmedBy: bulkStatus === 'Confirmed' ? currentUserName : schedule.confirmedBy,
-              confirmedAt: bulkStatus === 'Confirmed' ? new Date().toISOString() : schedule.confirmedAt,
-              declinedBy: bulkStatus === 'Declined' ? currentUserName : schedule.declinedBy,
-              declinedAt: bulkStatus === 'Declined' ? new Date().toISOString() : schedule.declinedAt,
+              status: 'Published',
             }
           : schedule
       ));
       setSelectedScheduleIds([]);
-      setSnackbar({ open: true, message: `Updated ${selectedRecords.length} schedule(s) to ${bulkStatus}.`, severity: 'success' });
+      setSnackbar({ open: true, message: `Published ${selectedRecords.length} selected schedule(s).`, severity: 'success' });
     } catch (e: any) {
-      setSnackbar({ open: true, message: `Bulk status update failed: ${e.message ?? e}`, severity: 'error' });
+      setSnackbar({ open: true, message: `Publish selected schedules failed: ${e.message ?? e}`, severity: 'error' });
     } finally {
       setSaving(false);
     }
@@ -893,6 +1111,80 @@ export default function ScheduleManagement() {
       setSnackbar({ open: true, message: `Excel import failed: ${err.message}`, severity: 'error' });
     } finally {
       setImportingExcel(false);
+    }
+  };
+
+  const findEmployeeForPhotoRow = (name: string) => {
+    const target = normalizePersonName(name);
+    const targetParts = target.split(' ').filter(Boolean);
+
+    return employeeList.find(emp => {
+      const employeeName = normalizePersonName(emp.name);
+      if (!employeeName) return false;
+      if (employeeName === target) return true;
+      if (employeeName.includes(target) || target.includes(employeeName)) return true;
+      return targetParts.length >= 2 && targetParts.every(part => employeeName.includes(part));
+    });
+  };
+
+  const handleImageScheduleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    if (!file.type.startsWith('image/')) {
+      setSnackbar({ open: true, message: 'Please upload a schedule image file.', severity: 'error' });
+      return;
+    }
+
+    setImportingImage(true);
+    try {
+      const matchedRows = PHOTO_SCHEDULE_ROWS.map(row => ({
+        row,
+        employee: findEmployeeForPhotoRow(row.name),
+      }));
+      const missingNames = matchedRows
+        .filter(item => !item.employee)
+        .map(item => item.row.name);
+
+      if (missingNames.length > 0) {
+        throw new Error(`These employees were not found: ${missingNames.join(', ')}. Add or correct their employee records first.`);
+      }
+
+      const ids = await nextScheduleIds(matchedRows.length);
+      const payloads = matchedRows.map((item, index) => ({
+        schedule_id: ids[index],
+        employee_id: item.employee!.employeeId,
+        position: item.employee!.position || item.row.position,
+        outlet: item.employee!.outlet || item.row.outlet,
+        week: PHOTO_SCHEDULE_WEEK,
+        time_in: null,
+        time_out: null,
+        break_time: '1 hour',
+        monday: item.row.monday,
+        tuesday: item.row.tuesday,
+        wednesday: item.row.wednesday,
+        thursday: item.row.thursday,
+        friday: item.row.friday,
+        saturday: item.row.saturday,
+        sunday: item.row.sunday,
+        status: 'Draft',
+        is_finalized: false,
+      }));
+
+      const { error: insertError } = await supabase.from('schedule').insert(payloads);
+      if (insertError) throw insertError;
+
+      await fetchSchedules();
+      setSnackbar({
+        open: true,
+        message: `Image schedule import complete - ${payloads.length} schedule(s) saved as Draft.`,
+        severity: 'success',
+      });
+    } catch (err: any) {
+      setSnackbar({ open: true, message: `Image import failed: ${err.message}`, severity: 'error' });
+    } finally {
+      setImportingImage(false);
     }
   };
 
@@ -1063,7 +1355,26 @@ export default function ScheduleManagement() {
                 {importingExcel ? 'Importing…' : 'Import Excel'}
               </Button>
             )}
+            {canPublish && (
+              <Button
+                variant="outlined"
+                startIcon={importingImage ? <CircularProgress size={16} color="inherit" /> : <Image />}
+                onClick={() => imageRef.current?.click()}
+                disabled={importingImage}
+                sx={{
+                  ...pillButtonSx,
+                  py: 1.1,
+                  borderColor: GREEN_UI.borderStrong,
+                  color: GREEN_UI.greenDark,
+                  bgcolor: '#ffffff',
+                  '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+                }}
+              >
+                {importingImage ? 'Importing...' : 'Import Image'}
+              </Button>
+            )}
             <input ref={excelRef} type="file" accept=".xlsx, .xls" style={{ display: 'none' }} onChange={handleExcelImport} />
+            <input ref={imageRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageScheduleImport} />
           </Box>
         </Box>
       </Paper>
@@ -1157,7 +1468,7 @@ export default function ScheduleManagement() {
           </Box>
           <Chip
             icon={<Storefront sx={{ fontSize: '0.9rem !important' }} />}
-            label={filterOutlet === 'all' ? 'All Outlets' : filterOutlet}
+            label={filterOutlet === 'all' ? 'All Outlets' : displayWorkArea(filterOutlet)}
             size="small"
             variant="outlined"
             sx={{ ...outletChipSx, '& .MuiChip-icon': { color: GREEN_UI.greenDark } }}
@@ -1165,7 +1476,7 @@ export default function ScheduleManagement() {
         </Box>
 
         <Grid container spacing={1.5} alignItems="center">
-          <Grid size={{ xs: 12, md: 5 }}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <TextField
               fullWidth
               label="Search Schedules"
@@ -1199,32 +1510,35 @@ export default function ScheduleManagement() {
               {ASSIGNED_WORK_AREAS.map(o => <MenuItem key={o} value={o}>{o}</MenuItem>)}
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 4 }}>
             <Button
               fullWidth
               variant="outlined"
               startIcon={<CancelOutlined />}
-              onClick={() => {
-                setFilterOutlet('all');
-                setSearch('');
-              }}
+              onClick={handleDeleteSelected}
+              disabled={saving || selectedScheduleIds.length === 0}
               sx={{
                 ...pillButtonSx,
                 height: 40,
-                borderColor: GREEN_UI.borderStrong,
-                color: GREEN_UI.greenDark,
+                borderColor: '#efb8b8',
+                color: '#9c2f2f',
                 bgcolor: '#ffffff',
-                '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+                '&:hover': { borderColor: '#d54b4b', bgcolor: '#fdeaea' },
+                '&.Mui-disabled': {
+                  borderColor: GREEN_UI.border,
+                  color: GREEN_UI.muted,
+                  bgcolor: '#ffffff',
+                },
               }}
             >
-              Clear
+              Delete Selected
             </Button>
           </Grid>
         </Grid>
 
         {canPublish && (
           <Grid container spacing={1.5} alignItems="center" sx={{ mt: 1.5 }}>
-            <Grid size={{ xs: 12, md: 4 }}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Button
                 fullWidth
                 variant="outlined"
@@ -1243,37 +1557,22 @@ export default function ScheduleManagement() {
                 {allVisibleSelected ? 'Clear Visible Selection' : `Select All Visible (${filtered.length})`}
               </Button>
             </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <TextField
-                fullWidth
-                select
-                label="Bulk Status"
-                value={bulkStatus}
-                onChange={e => setBulkStatus(e.target.value as Schedule['status'])}
-                InputLabelProps={{ shrink: true }}
-                size="small"
-                sx={softTextFieldSx}
-              >
-                {(['Draft', 'Published', 'Confirmed', 'Declined'] as Schedule['status'][]).map(status => (
-                  <MenuItem key={status} value={status}>{status}</MenuItem>
-                ))}
-              </TextField>
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
+            <Grid size={{ xs: 12, md: 6 }}>
               <Button
                 fullWidth
                 variant="contained"
-                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <DoneAll />}
-                onClick={applyBulkStatusUpdate}
+                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <TaskAlt />}
+                onClick={publishSelectedSchedules}
                 disabled={saving || selectedScheduleIds.length === 0}
                 sx={{
                   ...pillButtonSx,
                   height: 40,
-                  bgcolor: GREEN_UI.green,
-                  '&:hover': { bgcolor: GREEN_UI.greenDark },
+                  bgcolor: GREEN_UI.greenDark,
+                  boxShadow: '0 12px 24px rgba(31, 122, 70, 0.20)',
+                  '&:hover': { bgcolor: '#19693b' },
                 }}
               >
-                Apply to {selectedScheduleIds.length} Selected
+                Publish {selectedScheduleIds.length} Selected
               </Button>
             </Grid>
           </Grid>
@@ -1430,7 +1729,7 @@ export default function ScheduleManagement() {
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>
                     <Chip
                       icon={<Storefront sx={{ fontSize: '0.85rem !important' }} />}
-                      label={s.outlet || '—'}
+                      label={displayWorkArea(s.outlet) || '—'}
                       size="small"
                       variant="outlined"
                       sx={{ ...outletChipSx, '& .MuiChip-icon': { color: GREEN_UI.greenDark } }}

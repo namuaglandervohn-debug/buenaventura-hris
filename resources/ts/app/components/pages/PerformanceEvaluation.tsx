@@ -34,7 +34,6 @@ import {
   EmojiEvents,
   Grade,
   Groups,
-  Insights,
   Save,
   Sync,
   TaskAlt,
@@ -45,6 +44,12 @@ import { useAuth } from "../../context/AuthContext";
 import ActionSnackbar from "../ActionSnackbar";
 
 const AVAILABLE_POSITIONS = POSITIONS.filter((position) => position !== "Payroll Staff");
+
+const cleanCriteriaReadyMessage = (message: string) =>
+  message
+    .replace(/\bDSS computation\b/gi, "evaluation")
+    .replace(/\bDSS\b/gi, "evaluation")
+    .trim();
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 type EvaluationStatus = "Draft" | "Submitted" | "Reviewed" | "Approved" | "Returned" | "Cancelled";
@@ -101,34 +106,6 @@ interface EvaluationResult {
   status: EvaluationStatus;
   remarks: string | null;
   scores: Record<string, EvaluationScoreRow>;
-}
-
-interface DssResult {
-  result_id: string;
-  result_period_start: string;
-  result_period_end: string;
-  result_period_label: string | null;
-  total_employees: number;
-  highest_score: number;
-  average_score: number;
-  lowest_score: number;
-  top_employee_id: string | null;
-  top_employee_name: string | null;
-  status: string;
-  generated_at: string | null;
-}
-
-interface DssResultItem {
-  result_id: string;
-  evaluation_id: string;
-  employee_id: string;
-  employee_name: string;
-  position: string;
-  outlet: string;
-  final_weighted_score: number;
-  rating_label: string | null;
-  rank_no: number;
-  recommendation: string | null;
 }
 
 interface FormState {
@@ -372,8 +349,6 @@ export default function PerformanceEvaluation() {
   const [evaluations, setEvaluations] = useState<EvaluationResult[]>([]);
   const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
   const [supervisors, setSupervisors] = useState<SupervisorAccount[]>([]);
-  const [latestDss, setLatestDss] = useState<DssResult | null>(null);
-  const [ranking, setRanking] = useState<DssResultItem[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [employeesLoading, setEmployeesLoading] = useState(false);
@@ -395,11 +370,6 @@ export default function PerformanceEvaluation() {
 
   const [criteriaDialogOpen, setCriteriaDialogOpen] = useState(false);
   const [criteriaDraft, setCriteriaDraft] = useState<CriteriaEditorRow[]>([]);
-
-  const [dssDialogOpen, setDssDialogOpen] = useState(false);
-  const [dssPeriodStart, setDssPeriodStart] = useState(monthStart());
-  const [dssPeriodEnd, setDssPeriodEnd] = useState(monthEnd());
-  const [dssPeriodLabel, setDssPeriodLabel] = useState("");
 
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -437,7 +407,7 @@ export default function PerformanceEvaluation() {
       setCriteriaReady({
         total_weight: Number(readyData[0].total_weight || 0),
         is_ready: Boolean(readyData[0].is_ready),
-        message: String(readyData[0].message || ""),
+        message: cleanCriteriaReadyMessage(String(readyData[0].message || "")),
       });
     }
   };
@@ -458,19 +428,42 @@ export default function PerformanceEvaluation() {
 
       if (userAccountsErr) throw userAccountsErr;
 
+      const employeeIds = (data ?? [])
+        .map((employee: any) => String(employee.employee_id ?? "").trim())
+        .filter(Boolean);
+      const { data: scheduleData, error: scheduleErr } = employeeIds.length > 0
+        ? await supabase
+            .from("schedule")
+            .select("schedule_id, employee_id, position, outlet, week")
+            .in("employee_id", employeeIds)
+            .order("schedule_id", { ascending: false })
+        : { data: [], error: null } as any;
+
+      if (scheduleErr) throw scheduleErr;
+
       const outletMap = new Map(
         (userAccountsData ?? []).map((u: any) => [
           u.employee_id,
           u.outlet,
         ])
       );
+      const scheduleMap = new Map<string, { position: string; outlet: string }>();
+      (scheduleData ?? []).forEach((schedule: any) => {
+        const employeeId = String(schedule.employee_id ?? "").trim();
+        if (!employeeId || scheduleMap.has(employeeId)) return;
+
+        scheduleMap.set(employeeId, {
+          position: String(schedule.position ?? "").trim(),
+          outlet: String(schedule.outlet ?? "").trim(),
+        });
+      });
 
       setEmployees(
         (data || []).map((e: any) => ({
           employee_id: e.employee_id,
           name: fullName(e) || e.employee_id,
-          position: e.position || "",
-          outlet: outletMap.get(e.employee_id) || e.outlet || "",
+          position: e.position || scheduleMap.get(e.employee_id)?.position || "",
+          outlet: outletMap.get(e.employee_id) || e.outlet || scheduleMap.get(e.employee_id)?.outlet || "",
           status: e.status || "Active",
         }))
       );
@@ -559,39 +552,11 @@ export default function PerformanceEvaluation() {
     );
   };
 
-  const fetchLatestDss = async () => {
-    const { data: dssRows, error: dssErr } = await supabase
-      .from("dss_results")
-      .select("*")
-      .order("generated_at", { ascending: false })
-      .limit(1);
-
-    if (dssErr) throw dssErr;
-
-    const current = (dssRows || [])[0] as DssResult | undefined;
-    setLatestDss(current || null);
-
-    if (!current?.result_id) {
-      setRanking([]);
-      return;
-    }
-
-    const { data: items, error: itemErr } = await supabase
-      .from("dss_result_items")
-      .select("*")
-      .eq("result_id", current.result_id)
-      .order("rank_no", { ascending: true });
-
-    if (itemErr) throw itemErr;
-
-    setRanking((items || []) as DssResultItem[]);
-  };
-
   const refreshAll = async () => {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([fetchCriteria(), fetchEmployees(), fetchSupervisors(), fetchEvaluations(), fetchLatestDss()]);
+      await Promise.all([fetchCriteria(), fetchEmployees(), fetchSupervisors(), fetchEvaluations()]);
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Could not load performance evaluation data.");
@@ -625,7 +590,17 @@ export default function PerformanceEvaluation() {
   }, [currentEmployeeId, currentUserId, currentUserName, evaluations, isEmployee, isSupervisor]);
 
   const previewScore = computePreviewScore(form.scores, criteria);
-  const topDssItem = ranking.find((r) => (r.recommendation || "").includes("Employee of the Month")) || ranking[0] || null;
+  const positionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...AVAILABLE_POSITIONS,
+          ...employees.map((employee) => employee.position),
+          form.position,
+        ].map((position) => String(position ?? "").trim()).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [employees, form.position]
+  );
   const assignedDraftEvaluations = useMemo(
     () => displayedEvaluations.filter((evaluation) => evaluation.status === "Draft"),
     [displayedEvaluations]
@@ -920,83 +895,6 @@ export default function PerformanceEvaluation() {
       showMessage(`Failed: ${err?.message || "Could not delete evaluation."}`, "error");
     }
   };
-
-  const handleGenerateDss = async () => {
-    if (!dssPeriodStart || !dssPeriodEnd) {
-      showMessage("Please select ranking period start and end dates.", "warning");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const { data: resultId, error: err } = await supabase.rpc("generate_dss_results_from_evaluations", {
-        p_period_start: dssPeriodStart,
-        p_period_end: dssPeriodEnd,
-        p_period_label: dssPeriodLabel || `${dssPeriodStart} — ${dssPeriodEnd}`,
-        p_generated_by_user_id: null,
-      });
-
-      if (err) throw err;
-
-      await supabase.rpc("create_system_log", {
-        p_user_id: null,
-        p_user_name: currentUserName,
-        p_user_role: (user as any)?.role || null,
-        p_action: "GENERATE_PERFORMANCE_RANKING",
-        p_module: "Performance Evaluation",
-        p_record_id: String(resultId),
-        p_record_table: "dss_results",
-        p_description: `Generated automated performance ranking for ${dssPeriodStart} to ${dssPeriodEnd}.`,
-        p_old_data: null,
-        p_new_data: { result_id: resultId },
-        p_ip_address: null,
-        p_user_agent: navigator.userAgent,
-      });
-
-      setDssDialogOpen(false);
-      showMessage("Automated ranking generated successfully.", "success");
-      await refreshAll();
-    } catch (err: any) {
-      console.error(err);
-      showMessage(`Failed: ${err?.message || "Could not generate automated ranking."}`, "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleMarkEOTM = async (item: DssResultItem) => {
-    try {
-      const { error: err } = await supabase
-        .from("dss_result_items")
-        .update({ recommendation: "Employee of the Month", remarks: "Manually marked by management." })
-        .eq("result_id", item.result_id)
-        .eq("evaluation_id", item.evaluation_id);
-
-      if (err) throw err;
-
-      await supabase.rpc("create_system_log", {
-        p_user_id: null,
-        p_user_name: currentUserName,
-        p_user_role: (user as any)?.role || null,
-        p_action: "MARK_EMPLOYEE_OF_THE_MONTH",
-        p_module: "Performance Evaluation",
-        p_record_id: item.evaluation_id,
-        p_record_table: "dss_result_items",
-        p_description: `${item.employee_name} was marked as Employee of the Month.`,
-        p_old_data: null,
-        p_new_data: { recommendation: "Employee of the Month" },
-        p_ip_address: null,
-        p_user_agent: navigator.userAgent,
-      });
-
-      showMessage("Employee of the Month saved.", "success");
-      await refreshAll();
-    } catch (err: any) {
-      console.error(err);
-      showMessage(`Failed: ${err?.message || "Could not mark Employee of the Month."}`, "error");
-    }
-  };
-
   /* ── Criteria actions ──────────────────────────────────────────────── */
   const openCriteriaDialog = () => {
     setCriteriaDraft(
@@ -1102,7 +1000,6 @@ export default function PerformanceEvaluation() {
       setSaving(false);
     }
   };
-
   const performanceStats = [
     {
       label: "Total Evaluations",
@@ -1114,23 +1011,22 @@ export default function PerformanceEvaluation() {
       label: "Submitted / Pending",
       value: evaluations.filter((r) => r.status === "Submitted" || r.status === "Reviewed").length,
       caption: "Records waiting for review or approval.",
-      icon: <Insights fontSize="small" />,
-    },
-    {
-      label: "Latest Ranking Average",
-      value: latestDss ? `${Number(latestDss.average_score || 0).toFixed(2)}%` : "—",
-      caption: latestDss ? latestDss.result_period_label || "Most recent generated ranking." : "Generate a ranking to calculate average score.",
       icon: <Grade fontSize="small" />,
     },
     {
-      label: "Employee of the Month",
-      value: topDssItem ? topDssItem.employee_name : "Not yet generated",
-      caption: topDssItem ? `${Number(topDssItem.final_weighted_score || 0).toFixed(2)}% final weighted score.` : "Top employee will appear after ranking.",
+      label: "Approved Evaluations",
+      value: evaluations.filter((r) => r.status === "Approved").length,
+      caption: "Evaluation records finalized by management.",
+      icon: <Grade fontSize="small" />,
+    },
+    {
+      label: "Assigned Drafts",
+      value: assignedDraftEvaluations.length,
+      caption: "Draft evaluations assigned to supervisors.",
       icon: <EmojiEvents fontSize="small" />,
       featured: true,
     },
   ];
-
   /* ═══════════════════════════════════════════════════════════════════ */
   return (
     <Box
@@ -1211,7 +1107,7 @@ export default function PerformanceEvaluation() {
               Performance Evaluation
             </Typography>
             <Typography variant="body2" sx={{ color: GREEN_UI.muted, maxWidth: 680, lineHeight: 1.7 }}>
-              Connected criteria management, employee scoring, automated ranking, and Employee of the Month support in one clean workspace.
+              Manage criteria, assign employee evaluations, and review submitted performance scores in one clean workspace.
             </Typography>
           </Box>
 
@@ -1271,22 +1167,6 @@ export default function PerformanceEvaluation() {
               </Button>
             )}
 
-            {(isHR || isGM) && (
-              <Button
-                variant="contained"
-                startIcon={<Insights />}
-                onClick={() => setDssDialogOpen(true)}
-                sx={{
-                  ...pillButtonSx,
-                  py: 1.1,
-                  bgcolor: "#9b6b00",
-                  boxShadow: "0 12px 24px rgba(155, 107, 0, 0.18)",
-                  "&:hover": { bgcolor: "#7b5600" },
-                }}
-              >
-                Generate Ranking
-              </Button>
-            )}
           </Box>
         </Box>
       </Paper>
@@ -1393,7 +1273,7 @@ export default function PerformanceEvaluation() {
               flexShrink: 0,
             }}
           >
-            <Insights />
+            <Grade />
           </Box>
           <Box sx={{ minWidth: 0 }}>
             <Typography fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.5 }}>
@@ -1677,134 +1557,6 @@ export default function PerformanceEvaluation() {
           </Table>
         )}
       </TableContainer>
-
-      {(isHR || isGM || ranking.length > 0) && (
-        <Paper elevation={0} sx={{ ...softCardSx, mb: 2.5, overflow: "hidden" }}>
-          <Box
-            sx={{
-              px: { xs: 2, sm: 2.5 },
-              py: 2,
-              borderBottom: `1px solid ${GREEN_UI.border}`,
-              background: "linear-gradient(90deg, #ffffff 0%, #f1faed 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: 1.5,
-            }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
-              <Box sx={{ width: 38, height: 38, borderRadius: "14px", display: "grid", placeItems: "center", bgcolor: GREEN_UI.warningSoft, color: GREEN_UI.warningDark }}>
-                <EmojiEvents fontSize="small" />
-              </Box>
-              <Box>
-                <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                  Automated Ranking Results
-                </Typography>
-                <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                  {latestDss
-                    ? `${latestDss.result_period_label || "Latest Ranking Result"} • ${latestDss.result_period_start} to ${latestDss.result_period_end}`
-                    : "Generate a ranking to view employee recommendations."}
-                </Typography>
-              </Box>
-            </Box>
-            {(isHR || isGM) && (
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<Insights />}
-                onClick={() => setDssDialogOpen(true)}
-                sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark, bgcolor: "#ffffff", "&:hover": { bgcolor: GREEN_UI.greenSoft } }}
-              >
-                Generate Ranking
-              </Button>
-            )}
-          </Box>
-
-          <TableContainer sx={{ overflowX: "auto", "&::-webkit-scrollbar": { height: 10 }, "&::-webkit-scrollbar-thumb": { bgcolor: "#cfe8d1"} }}>
-            <Table sx={{ ...tableSx, minWidth: 900 }}>
-              <TableHead>
-                <TableRow sx={tableHeadRowSx}>
-                  {["Rank", "Employee", "Position", "Outlet", "Score", "Rating", "Recommendation", ...(isGM ? ["Action"] : [])].map((h) => (
-                    <TableCell key={h}>{h}</TableCell>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {ranking.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7 + (isGM ? 1 : 0)} align="center" sx={{ py: 7 }}>
-                      <Box sx={{ maxWidth: 380, mx: "auto" }}>
-                        <Box sx={{ width: 54, height: 54, borderRadius: "20px", display: "grid", placeItems: "center", mx: "auto", mb: 1.5, bgcolor: GREEN_UI.warningSoft, color: GREEN_UI.warningDark }}>
-                          <EmojiEvents />
-                        </Box>
-                        <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                          No ranking generated yet
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 0.5 }}>
-                          Ranking results will appear here after generating a period.
-                        </Typography>
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  ranking.map((item) => (
-                    <TableRow key={`${item.result_id}-${item.evaluation_id}`} hover sx={{ bgcolor: item.rank_no === 1 ? "rgba(255, 255, 255, 0.55)" : "inherit" }}>
-                      <TableCell>
-                        <Chip
-                          icon={item.rank_no === 1 ? <EmojiEvents /> : undefined}
-                          label={item.rank_no === 1 ? "#1" : `#${item.rank_no}`}
-                          size="small"
-                          variant="outlined"
-                          sx={item.rank_no === 1 ? ratingChipSx(90) : { fontWeight: 600, bgcolor: "#f8fcf5", borderColor: GREEN_UI.border }}
-                        />
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        <Typography fontWeight={600} sx={{ color: GREEN_UI.text }}>
-                          {item.employee_name}
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                          {item.employee_id}
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>{item.position || "—"}</TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>{item.outlet || "—"}</TableCell>
-                      <TableCell>
-                        <Typography fontWeight={700} sx={{ color: GREEN_UI.greenDark }}>
-                          {Number(item.final_weighted_score || 0).toFixed(2)}%
-                        </Typography>
-                      </TableCell>
-                      <TableCell>{item.rating_label || "—"}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={item.recommendation || "—"}
-                          size="small"
-                          variant="outlined"
-                          sx={(item.recommendation || "").includes("Employee of the Month") ? ratingChipSx(90) : item.rank_no === 1 ? statusChipSx("Approved") : statusChipSx("Draft")}
-                        />
-                      </TableCell>
-                      {isGM && (
-                        <TableCell>
-                          <Chip
-                            icon={<EmojiEvents />}
-                            label="Mark EOTM"
-                            size="small"
-                            clickable
-                            variant="outlined"
-                            sx={actionChipSx("warning")}
-                            onClick={() => handleMarkEOTM(item)}
-                          />
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      )}
-
       <Dialog open={assignDialogOpen} onClose={() => setAssignDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
         <DialogTitle fontWeight={700} sx={dialogTitleSx}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
@@ -1960,7 +1712,7 @@ export default function PerformanceEvaluation() {
                 sx={softTextFieldSx}
               >
                 <MenuItem value="">Select position…</MenuItem>
-                {AVAILABLE_POSITIONS.map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+                {positionOptions.map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
               </TextField>
             </Grid>
 
@@ -2169,53 +1921,6 @@ export default function PerformanceEvaluation() {
           </Button>
         </DialogActions>
       </Dialog>
-
-      <Dialog open={dssDialogOpen} onClose={() => setDssDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
-        <DialogTitle fontWeight={700} sx={dialogTitleSx}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1.2 }}>
-            <Box sx={{ width: 38, height: 38, borderRadius: "14px", display: "grid", placeItems: "center", bgcolor: GREEN_UI.warningSoft, color: GREEN_UI.warningDark }}>
-              <Insights fontSize="small" />
-            </Box>
-            <Box>
-              <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                Generate Automated Ranking
-              </Typography>
-              <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                Rank employees using submitted and approved evaluations.
-              </Typography>
-            </Box>
-          </Box>
-        </DialogTitle>
-        <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: "#fbfff9" }}>
-          <Alert severity="info" sx={{ mb: 2, borderRadius: "18px", border: `1px solid ${GREEN_UI.border}` }}>
-            This will rank employees based on approved/submitted evaluations for the selected period.
-          </Alert>
-
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="Period Start" type="date" value={dssPeriodStart} onChange={(e) => setDssPeriodStart(e.target.value)} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
-            </Grid>
-
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="Period End" type="date" value={dssPeriodEnd} onChange={(e) => setDssPeriodEnd(e.target.value)} InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
-            </Grid>
-
-            <Grid size={12}>
-              <TextField fullWidth label="Period Label" value={dssPeriodLabel} onChange={(e) => setDssPeriodLabel(e.target.value)} placeholder="Example: May 2026 Performance Ranking" InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
-            </Grid>
-          </Grid>
-        </DialogContent>
-
-        <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, bgcolor: "#fbfff9", borderTop: `1px solid ${GREEN_UI.border}` }}>
-          <Button onClick={() => setDssDialogOpen(false)} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleGenerateDss} disabled={saving} startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <Insights />} sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, "&:hover": { bgcolor: GREEN_UI.greenDark } }}>
-            {saving ? "Generating…" : "Generate"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       <ActionSnackbar
         open={snackbar.open}
         message={snackbar.message}

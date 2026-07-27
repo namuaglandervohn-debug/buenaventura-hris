@@ -48,7 +48,7 @@ export default async function handler(request, response) {
     return json(response, 500, { message: 'Resend is not configured.' });
   }
 
-  const appName = process.env.APP_NAME || 'Buenaventura HRIS DSS';
+  const appName = process.env.APP_NAME || 'Buenaventura HRIS';
   const fromAddress = process.env.RESEND_FROM_ADDRESS || 'no-reply@buenaventura-hris.me';
   const fromName = process.env.RESEND_FROM_NAME || appName;
   const trackingNote = 'Please keep this Applicant ID. You can use it to track your application status in the applicant portal.';

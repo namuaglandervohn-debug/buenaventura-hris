@@ -251,50 +251,6 @@ export default function GMDashboard() {
           </Typography>
         </Paper>
       )}
-
-      {/* EOTM Banner — content, preserved as-is */}
-      {stats?.eotmEmployee && (
-        <Paper
-          elevation={0}
-          sx={{
-            p: { xs: 2, sm: 2.5 },
-            mb: 2.5,
-            color: 'white',
-            borderRadius: '26px',
-            background: 'linear-gradient(135deg, #d9a441 0%, #e8c06a 100%)',
-            boxShadow: '0 18px 40px rgba(217, 164, 65, 0.22)',
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, position: 'relative' }}>
-            <Box
-              sx={{
-                width: 62,
-                height: 62,
-                borderRadius: '20px',
-                bgcolor: 'rgba(255,255,255,0.20)',
-                display: 'grid',
-                placeItems: 'center',
-              }}
-            >
-              <EmojiEvents sx={{ fontSize: 42 }} />
-            </Box>
-            <Box>
-              <Typography variant="caption" sx={{ opacity: 0.9, letterSpacing: 1, fontWeight: 700 }}>
-                🏆 EMPLOYEE OF THE MONTH
-              </Typography>
-              <Typography variant="h5" fontWeight={700} sx={{ letterSpacing: '-0.03em' }}>
-                {stats.eotmEmployee}
-              </Typography>
-              <Typography variant="body2" sx={{ opacity: 0.88 }}>
-                Highest Performance Score
-              </Typography>
-            </Box>
-          </Box>
-        </Paper>
-      )}
-
       {/* Stat Cards */}
       <Grid container spacing={{ xs: 1.5, md: 2 }} sx={{ mb: 2.5 }}>
         {statCards.map((stat, index) => (
