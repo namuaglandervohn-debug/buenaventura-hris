@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Buenaventura HRIS DSS'),
+    'name' => env('APP_NAME', 'Buenaventura HRIS'),
 
     /*
     |--------------------------------------------------------------------------

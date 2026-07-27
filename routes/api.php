@@ -468,7 +468,7 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
         return response()->json(['message' => 'Resend is not configured.'], 500);
     }
 
-    $appName = config('app.name', 'Buenaventura HRIS DSS');
+    $appName = config('app.name', 'Buenaventura HRIS');
     $fromAddress = env('RESEND_FROM_ADDRESS', config('mail.from.address'));
     $fromName = env('RESEND_FROM_NAME', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);
@@ -545,7 +545,7 @@ Route::post('/applications/send-status-email', function (Request $request) {
         return response()->json(['message' => 'Resend is not configured.'], 500);
     }
 
-    $appName = config('app.name', 'Buenaventura HRIS DSS');
+    $appName = config('app.name', 'Buenaventura HRIS');
     $fromAddress = env('RESEND_FROM_ADDRESS', config('mail.from.address'));
     $fromName = env('RESEND_FROM_NAME', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);
@@ -635,7 +635,7 @@ Route::post('/applications/send-hired-credentials-email', function (Request $req
         return response()->json(['message' => 'Resend is not configured.'], 500);
     }
 
-    $appName = config('app.name', 'Buenaventura HRIS DSS');
+    $appName = config('app.name', 'Buenaventura HRIS');
     $fromAddress = env('RESEND_FROM_ADDRESS', config('mail.from.address'));
     $fromName = env('RESEND_FROM_NAME', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);

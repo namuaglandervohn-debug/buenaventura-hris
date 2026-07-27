@@ -10,6 +10,7 @@ import {
   SpaceDashboard, PersonAddAlt1, Groups, CalendarMonth, Schedule, Assignment,
   Payments, Insights, Analytics, Logout, Menu as MenuIcon, CorporateFare,
   NotificationsNone, ManageAccounts, ReceiptLong, AccountCircle, BadgeOutlined, Work,
+  KeyboardArrowDown,
 } from '@mui/icons-material';
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
@@ -189,7 +190,7 @@ export default function RootLayout() {
         </Box>
         <Box sx={{ minWidth: 0 }}>
           <Typography sx={{ color: 'white', fontWeight: 700, lineHeight: 1.1, fontSize: '0.95rem' }} noWrap>Buenaventura</Typography>
-          <Typography sx={{ color: 'rgba(230,238,248,0.7)', fontSize: '0.72rem', letterSpacing: 1 }} noWrap>HRIS · DSS</Typography>
+          <Typography sx={{ color: 'rgba(230,238,248,0.7)', fontSize: '0.72rem', letterSpacing: 1 }} noWrap>HRIS</Typography>
         </Box>
       </Box>
 
@@ -278,20 +279,83 @@ export default function RootLayout() {
               Human Resource Information System
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Chip size="small" label={ROLE_LABELS[user.role] ?? user.role.toUpperCase()}
-              sx={{ display: { xs: 'none', sm: 'inline-flex' }, bgcolor: 'rgba(255,255,255,0.16)', color: 'white', border: '1px solid rgba(255,255,255,0.28)', fontWeight: 700, backdropFilter: 'blur(10px)' }} />
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.65,
+            }}
+          >
             <Tooltip title="Notifications">
-              <IconButton color="inherit" size="small" onClick={e => setNotifAnchor(e.currentTarget)} sx={{ bgcolor: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.18)', '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' } }}>
+              <IconButton
+                size="small"
+                onClick={e => setNotifAnchor(e.currentTarget)}
+                sx={{
+                  height: 42,
+                  width: 42,
+                  color: '#f5fff7',
+                  bgcolor: 'rgba(255,255,255,0.12)',
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 18px rgba(8, 72, 39, 0.12)',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' },
+                }}
+              >
                 <Badge badgeContent={unreadCount} color="error">
-                  <NotificationsNone />
+                  <NotificationsNone sx={{ fontSize: 21 }} />
                 </Badge>
               </IconButton>
             </Tooltip>
-            <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} size="small">
-              <Avatar sx={{ bgcolor: NAV_UI.gold, width: 38, height: 38, fontWeight: 700, boxShadow: '0 10px 22px rgba(0,0,0,0.16)' }}>{user.name.charAt(0)}</Avatar>
-            </IconButton>
-          </Stack>
+            <Tooltip title={`${user.name} - ${ROLE_LABELS[user.role] ?? user.role}`}>
+              <Box
+                component="button"
+                onClick={(e) => setAnchorEl(e.currentTarget)}
+                sx={{
+                  p: 0,
+                  m: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  minHeight: 42,
+                  px: 0.75,
+                  pr: 1,
+                  borderRadius: '12px',
+                  bgcolor: 'rgba(255,255,255,0.12)',
+                  border: '1px solid rgba(255,255,255,0.24)',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.14), 0 8px 18px rgba(8, 72, 39, 0.12)',
+                  backdropFilter: 'blur(12px)',
+                  cursor: 'pointer',
+                  minWidth: { xs: 0, sm: 230 },
+                  color: '#ffffff',
+                  transition: 'background 160ms ease, transform 160ms ease',
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.18)', transform: 'translateY(-1px)' },
+                }}
+              >
+                <Avatar
+                  sx={{
+                    bgcolor: NAV_UI.gold,
+                    color: '#fff',
+                    width: 34,
+                    height: 34,
+                    fontSize: '0.88rem',
+                    fontWeight: 800,
+                    boxShadow: '0 7px 14px rgba(0,0,0,0.12)',
+                    flexShrink: 0,
+                  }}
+                >
+                  {user.name.charAt(0)}
+                </Avatar>
+                <Box sx={{ display: { xs: 'none', sm: 'block' }, textAlign: 'left', minWidth: 0, flex: 1 }}>
+                  <Typography noWrap sx={{ maxWidth: { sm: 150, md: 190 }, color: '#ffffff', fontSize: '0.88rem', fontWeight: 800, lineHeight: 1.1 }}>
+                    {user.name}
+                  </Typography>
+                  <Typography noWrap sx={{ maxWidth: { sm: 150, md: 190 }, color: 'rgba(245,255,247,0.76)', fontSize: '0.72rem', fontWeight: 600, lineHeight: 1.2, mt: 0.1 }}>
+                    {ROLE_LABELS[user.role] ?? user.role}
+                  </Typography>
+                </Box>
+                <KeyboardArrowDown sx={{ display: { xs: 'none', sm: 'block' }, color: 'rgba(245,255,247,0.78)', fontSize: 20, flexShrink: 0 }} />
+              </Box>
+            </Tooltip>
+          </Box>
           <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)} PaperProps={{ sx: { mt: 1, minWidth: 220, borderRadius: 2 } }}>
             <MenuItem disabled><Typography fontWeight={700}>{user.name}</Typography></MenuItem>
             <MenuItem disabled><Typography variant="body2" color="text.secondary">{ROLE_LABELS[user.role]}</Typography></MenuItem>

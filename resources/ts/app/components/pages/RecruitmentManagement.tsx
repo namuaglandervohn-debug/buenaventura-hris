@@ -868,14 +868,25 @@ export default function RecruitmentManagement() {
     }
   };
 
-  const handleUpdateStatus = (id: string, status: AppStatus) =>
-    updateApplicantRecord(
+  const handleUpdateStatus = async (id: string, status: AppStatus) => {
+    if (status === 'Hired') {
+      await handleHiringDecision(id, 'Hired');
+      return;
+    }
+
+    if (status === 'Not Qualified') {
+      await handleHiringDecision(id, 'Not Qualified');
+      return;
+    }
+
+    await updateApplicantRecord(
       id,
       { status },
       { status },
       `Status updated to "${status}"!`,
       status === 'For Interview' ? undefined : { notifyStatus: status }
     );
+  };
 
   const buildRequirementsStatusNote = (status: AppStatus) => {
     const standardRequirements: [string, boolean][] = [
@@ -2754,6 +2765,19 @@ export default function RecruitmentManagement() {
                 Hire Applicant
               </Button>
             </>
+          )}
+
+          {(isHR || isGM) && selectedApp?.status === 'Hired' && (
+            <Button
+              variant="contained"
+              color="success"
+              startIcon={<HowToReg />}
+              onClick={() => handleHiringDecision(selectedApp.id, 'Hired')}
+              disabled={saving}
+              sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
+            >
+              Create / Reset Employee Account
+            </Button>
           )}
         </DialogActions>
       </Dialog>

@@ -923,7 +923,7 @@ export default function PerformanceEvaluation() {
 
   const handleGenerateDss = async () => {
     if (!dssPeriodStart || !dssPeriodEnd) {
-      showMessage("Please select DSS period start and end dates.", "warning");
+      showMessage("Please select ranking period start and end dates.", "warning");
       return;
     }
 
@@ -942,11 +942,11 @@ export default function PerformanceEvaluation() {
         p_user_id: null,
         p_user_name: currentUserName,
         p_user_role: (user as any)?.role || null,
-        p_action: "GENERATE_DSS_RANKING",
-        p_module: "Performance Evaluation DSS",
+        p_action: "GENERATE_PERFORMANCE_RANKING",
+        p_module: "Performance Evaluation",
         p_record_id: String(resultId),
         p_record_table: "dss_results",
-        p_description: `Generated DSS ranking for ${dssPeriodStart} to ${dssPeriodEnd}.`,
+        p_description: `Generated automated performance ranking for ${dssPeriodStart} to ${dssPeriodEnd}.`,
         p_old_data: null,
         p_new_data: { result_id: resultId },
         p_ip_address: null,
@@ -954,11 +954,11 @@ export default function PerformanceEvaluation() {
       });
 
       setDssDialogOpen(false);
-      showMessage("DSS ranking generated successfully.", "success");
+      showMessage("Automated ranking generated successfully.", "success");
       await refreshAll();
     } catch (err: any) {
       console.error(err);
-      showMessage(`Failed: ${err?.message || "Could not generate DSS ranking."}`, "error");
+      showMessage(`Failed: ${err?.message || "Could not generate automated ranking."}`, "error");
     } finally {
       setSaving(false);
     }
@@ -979,7 +979,7 @@ export default function PerformanceEvaluation() {
         p_user_name: currentUserName,
         p_user_role: (user as any)?.role || null,
         p_action: "MARK_EMPLOYEE_OF_THE_MONTH",
-        p_module: "Performance Evaluation DSS",
+        p_module: "Performance Evaluation",
         p_record_id: item.evaluation_id,
         p_record_table: "dss_result_items",
         p_description: `${item.employee_name} was marked as Employee of the Month.`,
@@ -1081,11 +1081,11 @@ export default function PerformanceEvaluation() {
         p_user_id: null,
         p_user_name: currentUserName,
         p_user_role: (user as any)?.role || null,
-        p_action: "UPDATE_DSS_CRITERIA",
-        p_module: "Performance Evaluation DSS",
+        p_action: "UPDATE_EVALUATION_CRITERIA",
+        p_module: "Performance Evaluation",
         p_record_id: null,
         p_record_table: "evaluation_criteria",
-        p_description: "Updated DSS evaluation criteria and weights.",
+        p_description: "Updated evaluation criteria and weights.",
         p_old_data: null,
         p_new_data: { total_weight: total, criteria_count: criteriaDraft.length },
         p_ip_address: null,
@@ -1093,7 +1093,7 @@ export default function PerformanceEvaluation() {
       });
 
       setCriteriaDialogOpen(false);
-      showMessage("DSS criteria updated successfully.", "success");
+      showMessage("Evaluation criteria updated successfully.", "success");
       await refreshAll();
     } catch (err: any) {
       console.error(err);
@@ -1117,15 +1117,15 @@ export default function PerformanceEvaluation() {
       icon: <Insights fontSize="small" />,
     },
     {
-      label: "Latest DSS Average",
+      label: "Latest Ranking Average",
       value: latestDss ? `${Number(latestDss.average_score || 0).toFixed(2)}%` : "—",
-      caption: latestDss ? latestDss.result_period_label || "Most recent generated ranking." : "Generate DSS to calculate average score.",
+      caption: latestDss ? latestDss.result_period_label || "Most recent generated ranking." : "Generate a ranking to calculate average score.",
       icon: <Grade fontSize="small" />,
     },
     {
       label: "Employee of the Month",
       value: topDssItem ? topDssItem.employee_name : "Not yet generated",
-      caption: topDssItem ? `${Number(topDssItem.final_weighted_score || 0).toFixed(2)}% final weighted score.` : "Top employee will appear after DSS ranking.",
+      caption: topDssItem ? `${Number(topDssItem.final_weighted_score || 0).toFixed(2)}% final weighted score.` : "Top employee will appear after ranking.",
       icon: <EmojiEvents fontSize="small" />,
       featured: true,
     },
@@ -1208,10 +1208,10 @@ export default function PerformanceEvaluation() {
                 mb: 0.75,
               }}
             >
-              Performance Evaluation with DSS
+              Performance Evaluation
             </Typography>
             <Typography variant="body2" sx={{ color: GREEN_UI.muted, maxWidth: 680, lineHeight: 1.7 }}>
-              Connected criteria management, employee scoring, DSS ranking, and Employee of the Month support in one clean workspace.
+              Connected criteria management, employee scoring, automated ranking, and Employee of the Month support in one clean workspace.
             </Typography>
           </Box>
 
@@ -1284,7 +1284,7 @@ export default function PerformanceEvaluation() {
                   "&:hover": { bgcolor: "#7b5600" },
                 }}
               >
-                Generate DSS
+                Generate Ranking
               </Button>
             )}
           </Box>
@@ -1375,7 +1375,7 @@ export default function PerformanceEvaluation() {
           icon={criteriaReady.is_ready ? <TaskAlt /> : undefined}
           sx={{ mb: 2, borderRadius: "18px", border: `1px solid ${GREEN_UI.border}` }}
         >
-          DSS Criteria Weight Check: <strong>{money(criteriaReady.total_weight)}%</strong> — {criteriaReady.message}
+          Criteria Weight Check: <strong>{money(criteriaReady.total_weight)}%</strong> — {criteriaReady.message}
         </Alert>
       )}
 
@@ -1397,7 +1397,7 @@ export default function PerformanceEvaluation() {
           </Box>
           <Box sx={{ minWidth: 0 }}>
             <Typography fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.5 }}>
-              DSS Weighted Scoring Formula
+              Weighted Scoring Formula
             </Typography>
             <Typography variant="body2" sx={{ color: GREEN_UI.muted, lineHeight: 1.8 }}>
               Final Score ={" "}
@@ -1699,12 +1699,12 @@ export default function PerformanceEvaluation() {
               </Box>
               <Box>
                 <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                  DSS Ranking Results
+                  Automated Ranking Results
                 </Typography>
                 <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
                   {latestDss
-                    ? `${latestDss.result_period_label || "Latest DSS Result"} • ${latestDss.result_period_start} to ${latestDss.result_period_end}`
-                    : "Generate a DSS ranking to view employee recommendations."}
+                    ? `${latestDss.result_period_label || "Latest Ranking Result"} • ${latestDss.result_period_start} to ${latestDss.result_period_end}`
+                    : "Generate a ranking to view employee recommendations."}
                 </Typography>
               </Box>
             </Box>
@@ -1739,10 +1739,10 @@ export default function PerformanceEvaluation() {
                           <EmojiEvents />
                         </Box>
                         <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                          No DSS ranking generated yet
+                          No ranking generated yet
                         </Typography>
                         <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 0.5 }}>
-                          Ranking results will appear here after generating a DSS period.
+                          Ranking results will appear here after generating a period.
                         </Typography>
                       </Box>
                     </TableCell>
@@ -1994,7 +1994,7 @@ export default function PerformanceEvaluation() {
           </Grid>
 
           <Divider sx={{ my: 3, borderColor: GREEN_UI.border }}>
-            <Chip label="DSS Criteria Scores" size="small" variant="outlined" sx={{ fontWeight: 700, color: GREEN_UI.greenDark, borderColor: GREEN_UI.borderStrong, bgcolor: "#ffffff" }} />
+            <Chip label="Criteria Scores" size="small" variant="outlined" sx={{ fontWeight: 700, color: GREEN_UI.greenDark, borderColor: GREEN_UI.borderStrong, bgcolor: "#ffffff" }} />
           </Divider>
 
           <Grid container spacing={1.5}>
@@ -2081,7 +2081,7 @@ export default function PerformanceEvaluation() {
               </Box>
               <Box>
                 <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                  Manage DSS Criteria
+                  Manage Criteria
                 </Typography>
                 <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
                   Update criteria weights and active scoring factors.
@@ -2178,7 +2178,7 @@ export default function PerformanceEvaluation() {
             </Box>
             <Box>
               <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                Generate DSS Ranking
+                Generate Automated Ranking
               </Typography>
               <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
                 Rank employees using submitted and approved evaluations.
@@ -2201,7 +2201,7 @@ export default function PerformanceEvaluation() {
             </Grid>
 
             <Grid size={12}>
-              <TextField fullWidth label="Period Label" value={dssPeriodLabel} onChange={(e) => setDssPeriodLabel(e.target.value)} placeholder="Example: May 2026 DSS Ranking" InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
+              <TextField fullWidth label="Period Label" value={dssPeriodLabel} onChange={(e) => setDssPeriodLabel(e.target.value)} placeholder="Example: May 2026 Performance Ranking" InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
             </Grid>
           </Grid>
         </DialogContent>

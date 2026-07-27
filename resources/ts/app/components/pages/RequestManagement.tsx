@@ -82,6 +82,13 @@ interface RequestRecord {
   submittedDate: string;
 }
 
+interface EmployeeLeaveDirectoryRow {
+  employeeId: string;
+  name: string;
+  position: string;
+  department: string;
+}
+
 interface NewRequestState {
   type: RequestType;
   leaveType: string;
@@ -267,6 +274,14 @@ function getUserName(currentUser: any) {
   return fullName || currentUser?.email || 'User';
 }
 
+function formatEmployeeName(row: any) {
+  return [row?.first_name, row?.middle_name, row?.last_name, row?.suffix]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getReviewerUserId(currentUser: any) {
   return currentUser?.user_id || null;
 }
@@ -374,11 +389,7 @@ function applyDisplayRequestIds(records: RequestRecord[]) {
 
 function mapRequestRow(row: any): RequestRecord {
   const employeeRow = Array.isArray(row.employees) ? row.employees[0] : row.employees;
-  const employeeName = [employeeRow?.first_name, employeeRow?.middle_name, employeeRow?.last_name, employeeRow?.suffix]
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const employeeName = formatEmployeeName(employeeRow);
 
   return {
     id: row.id,
@@ -411,6 +422,7 @@ export default function RequestManagement() {
   const currentUser = user as any;
 
   const [requests, setRequests] = useState<RequestRecord[]>([]);
+  const [employeeLeaveDirectory, setEmployeeLeaveDirectory] = useState<EmployeeLeaveDirectoryRow[]>([]);
   const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -422,6 +434,7 @@ export default function RequestManagement() {
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState(0);
   const [search, setSearch] = useState('');
+  const [leaveBalanceSearch, setLeaveBalanceSearch] = useState('');
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -496,6 +509,24 @@ export default function RequestManagement() {
     return buildSequentialRequestId(year, nextSequence);
   };
 
+  const fetchEmployeeLeaveDirectory = async () => {
+    const { data, error: employeeError } = await supabase
+      .from('employees')
+      .select('employee_id, first_name, middle_name, last_name, suffix, position, department')
+      .order('first_name', { ascending: true });
+
+    if (employeeError) throw employeeError;
+
+    setEmployeeLeaveDirectory(
+      (data ?? []).map((row: any) => ({
+        employeeId: row.employee_id ?? '',
+        name: formatEmployeeName(row) || row.employee_id || 'Unnamed Employee',
+        position: row.position ?? '',
+        department: row.department ?? '',
+      }))
+    );
+  };
+
   const fetchRequests = async (employeeIdOverride?: string | null) => {
     setLoading(true);
     setError(null);
@@ -539,6 +570,11 @@ export default function RequestManagement() {
         const employeeId = await resolveCurrentEmployeeId();
         if (!active) return;
         setCurrentEmployeeId(employeeId);
+        if (!isEmployee) {
+          await fetchEmployeeLeaveDirectory();
+        } else {
+          setEmployeeLeaveDirectory([]);
+        }
         await fetchRequests(employeeId);
       } catch (e: any) {
         if (!active) return;
@@ -825,6 +861,44 @@ export default function RequestManagement() {
     };
   });
 
+  const employeeLeaveBalanceRows = employeeLeaveDirectory.map(employee => {
+    const balances = Object.entries(DEFAULT_LEAVE_ENTITLEMENTS).map(([leaveType, available]) => {
+      const approvedDays = requests
+        .filter(request =>
+          request.type === 'Leave' &&
+          request.status === 'Approved' &&
+          request.leaveType === leaveType &&
+          request.employeeId === employee.employeeId
+        )
+        .reduce((sum, request) => sum + Number(request.totalDays ?? 0), 0);
+
+      return {
+        leaveType,
+        remaining: Math.max(available - approvedDays, 0),
+      };
+    });
+
+    return {
+      ...employee,
+      balances,
+      totalRemaining: balances.reduce((sum, balance) => sum + balance.remaining, 0),
+    };
+  });
+  const normalizedLeaveBalanceSearch = leaveBalanceSearch.trim().toLowerCase();
+  const filteredEmployeeLeaveBalanceRows = normalizedLeaveBalanceSearch
+    ? employeeLeaveBalanceRows.filter(employee =>
+        [
+          employee.employeeId,
+          employee.name,
+          employee.position,
+          employee.department,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedLeaveBalanceSearch)
+      )
+    : employeeLeaveBalanceRows;
+
   const resetNewRequestType = (type: RequestType) => {
     setNewRequest(prev => ({
       ...prev,
@@ -835,6 +909,183 @@ export default function RequestManagement() {
       endDate: type === 'Undertime' ? prev.startDate : prev.endDate,
     }));
   };
+
+  const leaveBalanceSection = (
+    <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mt: 2, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5, flexWrap: 'wrap' }}>
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: '16px',
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: GREEN_UI.greenSoft,
+            color: GREEN_UI.greenDark,
+          }}
+        >
+          <CalendarMonth />
+        </Box>
+        <Box>
+          <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
+            {isEmployee ? 'Leave Balance' : 'Employee Leave Balances'}
+          </Typography>
+          <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+            {isEmployee
+              ? 'Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.'
+              : 'List of existing employees and their remaining leave credits. Only final HR-approved leave requests reduce balances.'}
+          </Typography>
+        </Box>
+      </Box>
+      {isEmployee ? (
+        <Grid container spacing={1.2}>
+          {leaveBalances.map(balance => (
+            <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
+              <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
+                <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
+                  {balance.leaveType}
+                </Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
+                  {[
+                    ['Available', balance.available],
+                    ['Used', balance.used],
+                    ['Remaining', balance.remaining],
+                  ].map(([label, value]) => (
+                    <Box key={label} sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                        {label}
+                      </Typography>
+                      <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
+                        {value}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </Paper>
+            </Grid>
+          ))}
+        </Grid>
+      ) : (
+        <>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Search employee name, ID, position, or department..."
+          value={leaveBalanceSearch}
+          onChange={event => setLeaveBalanceSearch(event.target.value)}
+          sx={{ ...softTextFieldSx, mb: 1.25 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <ManageSearch sx={{ color: GREEN_UI.greenDark }} fontSize="small" />
+              </InputAdornment>
+            ),
+          }}
+        />
+        <TableContainer
+          component={Paper}
+          elevation={0}
+          sx={{
+            borderRadius: '18px',
+            border: `1px solid ${GREEN_UI.border}`,
+            bgcolor: 'rgba(255,255,255,0.82)',
+            overflowX: 'auto',
+          }}
+        >
+          <Table size="small" sx={{ minWidth: 1120 }}>
+            <TableHead>
+              <TableRow
+                sx={{
+                  '& th': {
+                    bgcolor: GREEN_UI.greenSoft,
+                    color: GREEN_UI.greenDark,
+                    fontWeight: 800,
+                    borderBottom: `1px solid ${GREEN_UI.border}`,
+                    whiteSpace: 'nowrap',
+                  },
+                }}
+              >
+                <TableCell>Employee</TableCell>
+                <TableCell>Position</TableCell>
+                <TableCell>Department</TableCell>
+                {LEAVE_TYPES.map(type => (
+                  <TableCell key={type} align="center">
+                    {type.replace(' Leave', '')}
+                  </TableCell>
+                ))}
+                <TableCell align="center">Total Remaining</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {employeeLeaveBalanceRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                    No employee records found.
+                  </TableCell>
+                </TableRow>
+              ) : filteredEmployeeLeaveBalanceRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                    No employees match your search.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredEmployeeLeaveBalanceRows.map(employee => (
+                  <TableRow
+                    key={employee.employeeId}
+                    hover
+                    sx={{
+                      '& td': {
+                        borderBottom: `1px solid ${GREEN_UI.border}`,
+                        color: GREEN_UI.text,
+                      },
+                    }}
+                  >
+                    <TableCell>
+                      <Box>
+                        <Typography fontWeight={800} sx={{ color: GREEN_UI.text }}>
+                          {employee.name}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                          {employee.employeeId}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell>{employee.position || '—'}</TableCell>
+                    <TableCell>{employee.department || '—'}</TableCell>
+                    {employee.balances.map(balance => (
+                      <TableCell key={balance.leaveType} align="center">
+                        <Chip
+                          label={balance.remaining}
+                          size="small"
+                          sx={{
+                            minWidth: 46,
+                            bgcolor: balance.remaining > 0 ? GREEN_UI.greenSoft : '#f4f7f3',
+                            color: balance.remaining > 0 ? GREEN_UI.greenDark : GREEN_UI.muted,
+                            border: `1px solid ${balance.remaining > 0 ? GREEN_UI.borderStrong : GREEN_UI.border}`,
+                            fontWeight: 800,
+                          }}
+                        />
+                      </TableCell>
+                    ))}
+                    <TableCell align="center">
+                      <Typography fontWeight={900} sx={{ color: GREEN_UI.greenDark }}>
+                        {employee.totalRemaining}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        </>
+      )}
+      <Alert severity="info" sx={{ mt: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
+        Unused leave credits remain available until the end of the current leave cycle. Carry-over or cash conversion is processed only when HR/Admin records an approved organization adjustment; otherwise unused credits are reset for the next cycle.
+      </Alert>
+    </Paper>
+  );
 
   return (
     <Box
@@ -1012,6 +1263,7 @@ export default function RequestManagement() {
         ))}
       </Grid>
 
+      {false && (
       <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5, flexWrap: 'wrap' }}>
           <Box
@@ -1029,44 +1281,141 @@ export default function RequestManagement() {
           </Box>
           <Box>
             <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-              Leave Balance
+              {isEmployee ? 'Leave Balance' : 'Employee Leave Balances'}
             </Typography>
             <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-              Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.
+              {isEmployee
+                ? 'Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.'
+                : 'List of existing employees and their remaining leave credits. Only final HR-approved leave requests reduce balances.'}
             </Typography>
           </Box>
         </Box>
-        <Grid container spacing={1.2}>
-          {leaveBalances.map(balance => (
-            <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
-              <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
-                <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
-                  {balance.leaveType}
-                </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
-                  {[
-                    ['Available', balance.available],
-                    ['Used', balance.used],
-                    ['Remaining', balance.remaining],
-                  ].map(([label, value]) => (
-                    <Box key={label} sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
-                        {label}
-                      </Typography>
-                      <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
-                        {value}
-                      </Typography>
-                    </Box>
+        {isEmployee ? (
+          <Grid container spacing={1.2}>
+            {leaveBalances.map(balance => (
+              <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
+                <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
+                  <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
+                    {balance.leaveType}
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
+                    {[
+                      ['Available', balance.available],
+                      ['Used', balance.used],
+                      ['Remaining', balance.remaining],
+                    ].map(([label, value]) => (
+                      <Box key={label} sx={{ minWidth: 0 }}>
+                        <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                          {label}
+                        </Typography>
+                        <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
+                          {value}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                </Paper>
+              </Grid>
+            ))}
+          </Grid>
+        ) : (
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              borderRadius: '18px',
+              border: `1px solid ${GREEN_UI.border}`,
+              bgcolor: 'rgba(255,255,255,0.82)',
+              overflowX: 'auto',
+            }}
+          >
+            <Table size="small" sx={{ minWidth: 1120 }}>
+              <TableHead>
+                <TableRow
+                  sx={{
+                    '& th': {
+                      bgcolor: GREEN_UI.greenSoft,
+                      color: GREEN_UI.greenDark,
+                      fontWeight: 800,
+                      borderBottom: `1px solid ${GREEN_UI.border}`,
+                      whiteSpace: 'nowrap',
+                    },
+                  }}
+                >
+                  <TableCell>Employee</TableCell>
+                  <TableCell>Position</TableCell>
+                  <TableCell>Department</TableCell>
+                  {LEAVE_TYPES.map(type => (
+                    <TableCell key={type} align="center">
+                      {type.replace(' Leave', '')}
+                    </TableCell>
                   ))}
-                </Box>
-              </Paper>
-            </Grid>
-          ))}
-        </Grid>
+                  <TableCell align="center">Total Remaining</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {employeeLeaveBalanceRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                      No employee records found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  employeeLeaveBalanceRows.map(employee => (
+                    <TableRow
+                      key={employee.employeeId}
+                      hover
+                      sx={{
+                        '& td': {
+                          borderBottom: `1px solid ${GREEN_UI.border}`,
+                          color: GREEN_UI.text,
+                        },
+                      }}
+                    >
+                      <TableCell>
+                        <Box>
+                          <Typography fontWeight={800} sx={{ color: GREEN_UI.text }}>
+                            {employee.name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                            {employee.employeeId}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell>{employee.position || '—'}</TableCell>
+                      <TableCell>{employee.department || '—'}</TableCell>
+                      {employee.balances.map(balance => (
+                        <TableCell key={balance.leaveType} align="center">
+                          <Chip
+                            label={balance.remaining}
+                            size="small"
+                            sx={{
+                              minWidth: 46,
+                              bgcolor: balance.remaining > 0 ? GREEN_UI.greenSoft : '#f4f7f3',
+                              color: balance.remaining > 0 ? GREEN_UI.greenDark : GREEN_UI.muted,
+                              border: `1px solid ${balance.remaining > 0 ? GREEN_UI.borderStrong : GREEN_UI.border}`,
+                              fontWeight: 800,
+                            }}
+                          />
+                        </TableCell>
+                      ))}
+                      <TableCell align="center">
+                        <Typography fontWeight={900} sx={{ color: GREEN_UI.greenDark }}>
+                          {employee.totalRemaining}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
         <Alert severity="info" sx={{ mt: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
           Unused leave credits remain available until the end of the current leave cycle. Carry-over or cash conversion is processed only when HR/Admin records an approved organization adjustment; otherwise unused credits are reset for the next cycle.
         </Alert>
       </Paper>
+      )}
 
       {error && (
         <Alert
@@ -1442,6 +1791,8 @@ export default function RequestManagement() {
           </Table>
         )}
       </TableContainer>
+
+      {leaveBalanceSection}
 
       <Dialog
         open={openDialog}

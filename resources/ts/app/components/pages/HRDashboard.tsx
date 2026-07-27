@@ -607,7 +607,7 @@ export default function HRDashboard() {
         icon: <EmojiEvents />,
         color: "#B98913",
         softColor: "#FFF4D8",
-        helper: "Latest DSS performance result",
+        helper: "Latest performance ranking result",
       },
     ],
     [loading, stats],
@@ -617,24 +617,6 @@ export default function HRDashboard() {
   const lastUpdatedLabel = lastUpdatedAt
     ? `Last updated ${lastUpdatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
     : "Waiting for live data";
-
-  const activityItems = [
-    {
-      label: "Employees",
-      value: loading ? "…" : stats.activeEmployees,
-      color: "#2F9E5E",
-    },
-    {
-      label: "Applications",
-      value: loading ? "…" : stats.pendingApplications,
-      color: "#ED8A1F",
-    },
-    {
-      label: "HR Validation",
-      value: loading ? "…" : stats.supervisorApprovedRequests,
-      color: "#8B5AD8",
-    },
-  ];
 
   return (
     <Box
@@ -739,7 +721,7 @@ export default function HRDashboard() {
               }}
             >
               Welcome to Buenaventura Estate HRIS. Monitor employees,
-              applications, requests, attendance, payroll, and DSS performance
+              applications, requests, attendance, payroll, and performance rankings
               in one clean workspace.
             </Typography>
           </Box>
@@ -943,6 +925,7 @@ export default function HRDashboard() {
         ))}
       </Grid>
 
+      {false && (
       <Grid container spacing={{ xs: 2, md: 2.5 }}>
         <Grid size={{ xs: 12 }}>
           <Stack spacing={2} sx={{ height: "100%" }}>
@@ -990,7 +973,7 @@ export default function HRDashboard() {
               </Stack>
 
               <Stack spacing={1.7}>
-                {activityItems.map((item) => (
+                {([] as Array<{ label: string; value: string | number; color: string }>).map((item) => (
                   <Box key={item.label}>
                     <Stack
                       direction="row"
@@ -1093,7 +1076,7 @@ export default function HRDashboard() {
                     mb: 1.5,
                   }}
                 >
-                  Latest top performer from approved or reviewed DSS records.
+                  Latest top performer from approved or reviewed evaluation records.
                 </Typography>
                 <Box
                   sx={{
@@ -1112,7 +1095,7 @@ export default function HRDashboard() {
                     {loading
                       ? "Fetching score"
                       : stats.topScore !== null
-                        ? `${stats.topScore.toFixed(1)}% final score`
+                        ? `${stats.topScore!.toFixed(1)}% final score`
                         : "No published score available"}
                   </Typography>
                 </Box>
@@ -1121,6 +1104,7 @@ export default function HRDashboard() {
           </Stack>
         </Grid>
       </Grid>
+      )}
     </Box>
   );
 }

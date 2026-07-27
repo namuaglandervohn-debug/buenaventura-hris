@@ -61,6 +61,7 @@ interface Attendance {
   id: string;
   displayId?: string;
   employeeId?: string;
+  biometricUserId?: string;
   employee: string;
   date: string;
   timeIn: string;
@@ -78,6 +79,7 @@ type AttendanceDraft = Omit<Attendance, "id" | "displayId" | "employeeId">;
 type EmployeeOption = {
   employee_id: string;
   name: string;
+  biometric_user_id?: string | null;
   position?: string | null;
   outlet?: string | null;
   status?: string | null;
@@ -316,12 +318,58 @@ function excelSerialToDate(serial: number) {
   return date.toISOString().slice(0, 10);
 }
 
+const MONTH_NUMBER: Record<string, number> = {
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  sept: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+};
+
+function formatYmd(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseMonthNameDate(value: unknown) {
+  const text = normalizeCell(value);
+  const match = text.match(
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{4})\b/i,
+  );
+  if (!match) return "";
+
+  const month = MONTH_NUMBER[match[1].toLowerCase()];
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+
+  return month && day && year ? formatYmd(year, month, day) : "";
+}
+
 function extractPunchTimes(value: unknown): string[] {
   if (value === null || value === undefined) return [];
 
   if (typeof value === "number") {
-    if (value > 0 && value < 1) {
-      return [formatMinutesAs24Hour(Math.round(value * 24 * 60))];
+    const timeFraction = value - Math.floor(value);
+    if (timeFraction > 0) {
+      return [formatMinutesAs24Hour(Math.round(timeFraction * 24 * 60))];
     }
     return [];
   }
@@ -345,9 +393,23 @@ function normalizeHeader(value: unknown) {
   return normalizeCell(value).toLowerCase().replace(/\s+/g, " ");
 }
 
+function toTitleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
 function findCellIndex(row: SheetRow, label: string) {
   const target = label.toLowerCase();
   return row.findIndex((cell) => normalizeHeader(cell) === target);
+}
+
+function findNextNonEmptyCell(row: SheetRow, startIndex: number) {
+  for (let index = startIndex; index < row.length; index++) {
+    const value = normalizeCell(row[index]);
+    if (value) return value;
+  }
+  return "";
 }
 
 function rowHasUserId(row: SheetRow) {
@@ -363,6 +425,15 @@ function parseReportDateRange(rows: SheetRow[]) {
       );
       if (match) {
         return { start: match[1], end: match[2] };
+      }
+
+      const monthNameRange = text.match(
+        /(?:Attendance\s*)?date\s*:\s*([A-Za-z]+\.?\s+\d{1,2},?\s+\d{4})\s*(?:~|-|\u2013|\u2014|to)\s*([A-Za-z]+\.?\s+\d{1,2},?\s+\d{4})/i,
+      );
+      if (monthNameRange) {
+        const start = parseMonthNameDate(monthNameRange[1]);
+        const end = parseMonthNameDate(monthNameRange[2]);
+        if (start && end) return { start, end };
       }
     }
   }
@@ -406,6 +477,9 @@ function normalizeDateValue(value: unknown) {
 
   const iso = text.match(/\d{4}-\d{2}-\d{2}/);
   if (iso) return iso[0];
+
+  const monthNameDate = parseMonthNameDate(text);
+  if (monthNameDate) return monthNameDate;
 
   const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (slash) {
@@ -458,7 +532,67 @@ function computeFromReportPunches(punches: string[]): Partial<AttendanceDraft> {
   return computeAttendanceFromPunches(punches);
 }
 
+function firstPunchTime(value: unknown) {
+  return extractPunchTimes(value)[0] ?? normalizeCell(value);
+}
+
 function parseAbnormalReportRows(rows: SheetRow[]): Partial<Attendance>[] {
+  const detailHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeHeader);
+    return (
+      headers.includes("name") &&
+      headers.includes("date") &&
+      headers.includes("remark") &&
+      headers.includes("status")
+    );
+  });
+
+  if (detailHeaderIndex !== -1) {
+    const headerRow = rows[detailHeaderIndex] ?? [];
+    const nameIndex = findCellIndex(headerRow, "name");
+    const dateIndex = findCellIndex(headerRow, "date");
+    const beforeNoonIndex = findCellIndex(headerRow, "before noon");
+    const afterNoonIndex = findCellIndex(headerRow, "after noon");
+    const remarkIndex = findCellIndex(headerRow, "remark");
+    const statusIndex = findCellIndex(headerRow, "status");
+    const parsedRows: Partial<Attendance>[] = [];
+
+    for (let i = detailHeaderIndex + 1; i < rows.length; i++) {
+      const row = rows[i] ?? [];
+      const firstCell = normalizeHeader(row[0]);
+      if (!normalizeCell(row[nameIndex]) || firstCell === "absence" || firstCell.startsWith("total ")) break;
+
+      const employee = normalizeCell(row[nameIndex]);
+      const date = normalizeDateValue(row[dateIndex]);
+      if (!employee || !date) continue;
+
+      const punches = [row[beforeNoonIndex], row[afterNoonIndex]].flatMap((cell) =>
+        extractPunchTimes(cell),
+      );
+      const computed = punches.length > 0 ? computeFromReportPunches(punches) : {};
+      const remark = normalizeCell(row[remarkIndex]);
+      const lateMinutes =
+        toNumber(remark.match(/late\s+by\s+(\d+)/i)?.[1]) ??
+        toNumber(remark.match(/(\d+)\s*(?:minute|min)/i)?.[1]) ??
+        0;
+      const status = getStatusValue(row[statusIndex]);
+
+      parsedRows.push({
+        employee,
+        date,
+        timeIn: computed.timeIn ?? "",
+        timeOut: computed.timeOut ?? "",
+        totalHours: computed.totalHours ?? "",
+        late: String(status === "Late" ? lateMinutes : 0),
+        undertime: "0",
+        overtime: "0",
+        status,
+      });
+    }
+
+    if (parsedRows.length > 0) return parsedRows;
+  }
+
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeHeader);
     return (
@@ -474,6 +608,7 @@ function parseAbnormalReportRows(rows: SheetRow[]): Partial<Attendance>[] {
   const parsedRows: Partial<Attendance>[] = [];
 
   rows.slice(headerIndex + 2).forEach((row) => {
+    const biometricUserId = normalizeCell(row[0]);
     const employee = normalizeCell(row[1]);
     const date = normalizeDateValue(row[3]);
     if (!employee || !date) return;
@@ -498,6 +633,7 @@ function parseAbnormalReportRows(rows: SheetRow[]): Partial<Attendance>[] {
 
     parsedRows.push({
       employee,
+      biometricUserId,
       date,
       timeIn: computed.timeIn ?? "",
       timeOut: computed.timeOut ?? "",
@@ -520,6 +656,68 @@ function parseAttendanceReportDetailRows(
   const dateRange = parseReportDateRange(rows);
   const parsedRows: Partial<Attendance>[] = [];
 
+  const dailyHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeHeader);
+    return (
+      headers.includes("date") &&
+      headers.includes("time in") &&
+      headers.includes("time out") &&
+      headers.some((header) => header.includes("worktime"))
+    );
+  });
+
+  if (dailyHeaderIndex !== -1) {
+    const headerRow = rows[dailyHeaderIndex] ?? [];
+    const dateIndex = findCellIndex(headerRow, "date");
+    const timeInIndex = findCellIndex(headerRow, "time in");
+    const timeOutIndex = findCellIndex(headerRow, "time out");
+    const worktimeIndex = headerRow.findIndex((cell) => normalizeHeader(cell).includes("worktime"));
+    const lateIndex = headerRow.findIndex((cell) => normalizeHeader(cell).includes("late"));
+    const overtimeIndex = headerRow.findIndex((cell) => normalizeHeader(cell).includes("overtime"));
+    const statusIndex = findCellIndex(headerRow, "status");
+    const remarksIndex = headerRow.findIndex((cell) => normalizeHeader(cell).startsWith("remarks"));
+    const employeeTitle = rows
+      .slice(0, dailyHeaderIndex)
+      .map((row) => normalizeCell(row[0]))
+      .reverse()
+      .find((cell) => /employee daily time card/i.test(cell));
+    const employeeFromTitle = employeeTitle?.replace(/employee daily time card\s*[-\u2013\u2014]\s*/i, "").trim();
+    const summaryNameHeaderIndex = rows
+      .slice(0, dailyHeaderIndex)
+      .findIndex((row) => row.map(normalizeHeader).includes("name"));
+    const summaryNameHeaderRow = summaryNameHeaderIndex !== -1 ? rows[summaryNameHeaderIndex] ?? [] : [];
+    const summaryNameCol = summaryNameHeaderRow.map(normalizeHeader).indexOf("name");
+    const employeeFromSummary =
+      summaryNameHeaderIndex !== -1 && summaryNameCol !== -1
+        ? normalizeCell(rows[summaryNameHeaderIndex + 1]?.[summaryNameCol])
+        : "";
+    const employee = normalizeCell(employeeFromSummary) || toTitleCase(employeeFromTitle ?? "");
+
+    for (let i = dailyHeaderIndex + 1; i < rows.length; i++) {
+      const row = rows[i] ?? [];
+      const firstCell = normalizeHeader(row[dateIndex]);
+      if (!firstCell || firstCell === "total" || firstCell.startsWith("prepared ")) break;
+
+      const date = normalizeDateValue(row[dateIndex]);
+      if (!employee || !date) continue;
+
+      parsedRows.push({
+        employee,
+        date,
+        timeIn: firstPunchTime(row[timeInIndex]),
+        timeOut: firstPunchTime(row[timeOutIndex]),
+        totalHours: String(toNumber(row[worktimeIndex]) ?? ""),
+        late: String(toNumber(row[lateIndex]) ?? 0),
+        undertime: "0",
+        overtime: String(Math.round((toNumber(row[overtimeIndex]) ?? 0) * 60)),
+        status: getStatusValue(row[statusIndex]),
+        discrepancy: normalizeCell(row[remarksIndex]),
+      });
+    }
+
+    if (parsedRows.length > 0) return parsedRows;
+  }
+
   const employeeHeaderRowIndex = rows.findIndex((row) =>
     row.some((cell) => normalizeHeader(cell) === "name"),
   );
@@ -538,6 +736,7 @@ function parseAttendanceReportDetailRows(
   blockStarts.forEach((startCol) => {
     const nameIndex = startCol + 8;
     const employee = normalizeCell(employeeHeaderRow[nameIndex + 1]);
+    const biometricUserId = normalizeCell(rows[employeeHeaderRowIndex + 1]?.[nameIndex + 1]);
     if (!employee) return;
 
     const dataRows = rows.slice(timeCardRowIndex + 3);
@@ -559,6 +758,7 @@ function parseAttendanceReportDetailRows(
 
       parsedRows.push({
         employee,
+        biometricUserId,
         date,
         ...computeFromReportPunches(punches),
       });
@@ -712,14 +912,28 @@ async function getNextAttendanceLogId(dateValue: string) {
   return `ATT-${year}-${String(maxSeq + 1).padStart(4, "0")}`;
 }
 
-async function resolveEmployeeForAttendance(employeeValue: unknown): Promise<EmployeeOption | null> {
+async function resolveEmployeeForAttendance(
+  employeeValue: unknown,
+  biometricUserId?: unknown,
+): Promise<EmployeeOption | null> {
   const clean = normalizeCell(employeeValue);
+  const biometricId = normalizeCell(biometricUserId);
   if (!clean) return null;
+
+  if (biometricId) {
+    const { data, error } = await supabase
+      .from("employees")
+      .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status, biometric_user_id")
+      .eq("biometric_user_id", biometricId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return { ...data, name: formatEmployeeName(data) || data.employee_id };
+  }
 
   if (/^EMP-\d{4}-\d+$/i.test(clean)) {
     const { data, error } = await supabase
       .from("employees")
-      .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status")
+      .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status, biometric_user_id")
       .eq("employee_id", clean)
       .maybeSingle();
     if (error) throw error;
@@ -728,7 +942,7 @@ async function resolveEmployeeForAttendance(employeeValue: unknown): Promise<Emp
 
   const { data, error } = await supabase
     .from("employees")
-    .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status")
+    .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status, biometric_user_id")
     .limit(1000);
 
   if (error) throw error;
@@ -846,33 +1060,61 @@ function parseEmployeeAttendanceRecordRows(
     const nameIndex = findCellIndex(currentRow, "name:");
     const employeeName =
       nameIndex !== -1
-        ? normalizeCell(currentRow[nameIndex + 1])
+        ? findNextNonEmptyCell(currentRow, nameIndex + 1)
         : normalizeCell(currentRow[userIdIndex + 1]);
 
     const employee =
       employeeName || `User ${normalizeCell(currentRow[userIdIndex + 1])}`;
+    const biometricUserId = normalizeCell(currentRow[userIdIndex + 1]);
     const dateRow = rows[i + 1] ?? [];
-    const punchRows: SheetRow[] = [];
 
     let j = i + 2;
     while (j < rows.length && !rowHasUserId(rows[j] ?? [])) {
-      punchRows.push(rows[j] ?? []);
       j++;
     }
+
+    const blockRows = rows.slice(i + 2, j);
+    const getBlockRow = (label: string) =>
+      blockRows.find((row) => normalizeHeader(row[0]) === label.toLowerCase()) ?? [];
+    const timeInRow = getBlockRow("time in");
+    const timeOutRow = getBlockRow("time out");
+    const statusRow = getBlockRow("status");
+    const remarksRow = getBlockRow("remarks");
+    const lateMinutesRow = getBlockRow("late minutes");
+    const overtimeHoursRow = getBlockRow("overtime hours");
+    const workHoursRow = getBlockRow("work hours");
 
     dateRow.forEach((dayValue, colIndex) => {
       const day = Number(normalizeCell(dayValue));
       if (!Number.isInteger(day) || day < 1 || day > 31) return;
 
-      const punches = punchRows.flatMap((row) =>
+      const labeledPunches = [
+        ...extractPunchTimes(timeInRow[colIndex]),
+        ...extractPunchTimes(timeOutRow[colIndex]),
+      ];
+      const blockPunches = blockRows.flatMap((row) =>
         extractPunchTimes(row[colIndex]),
       );
+      const punches = labeledPunches.length > 0 ? labeledPunches : blockPunches;
       if (punches.length === 0) return;
+
+      const computed = computeAttendanceFromPunches(punches);
+      const workHours = toNumber(workHoursRow[colIndex]);
+      const overtimeHours = toNumber(overtimeHoursRow[colIndex]) ?? 0;
+      const statusText = normalizeCell(statusRow[colIndex]);
+      const status = getStatusValue(statusText);
 
       parsedRows.push({
         employee,
+        biometricUserId,
         date: buildDateFromDay(day, dateRange),
-        ...computeAttendanceFromPunches(punches),
+        ...computed,
+        totalHours: workHours !== null ? String(Number(workHours.toFixed(2))) : computed.totalHours,
+        late: String(toNumber(lateMinutesRow[colIndex]) ?? computed.late ?? 0),
+        overtime: String(Math.round(overtimeHours * 60)),
+        undertime: computed.undertime ?? "0",
+        status,
+        discrepancy: normalizeCell(remarksRow[colIndex]),
       });
     });
 
@@ -911,9 +1153,11 @@ function parseWorkbookForAttendance(workbook: XLSX.WorkBook) {
     const hasUserBlocks = rows.some(rowHasUserId);
     const hasAbnormalReport = reportText.includes("abnormal report");
     const hasEmployeeAttendanceTable =
-      reportText.includes("employee attendance table") &&
+      (reportText.includes("employee attendance table") ||
+        reportText.includes("employee attendance report") ||
+        reportText.includes("employee daily time card")) &&
       !reportText.includes("shift setting table") &&
-      !reportText.includes("attendance statistic table");
+      (reportText.includes("time in") || reportText.includes("time card"));
 
     if (hasEmployeeAttendanceRecord || hasUserBlocks) {
       const parsed = parseEmployeeAttendanceRecordRows(rows);
@@ -985,8 +1229,9 @@ async function readErrorMessage(res: Response, fallback: string) {
 }
 
 async function saveImportTask(task: SaveImportTask): Promise<ImportSaveResult> {
-  const employee = await resolveEmployeeForAttendance(task.row.employee);
+  const employee = await resolveEmployeeForAttendance(task.row.employee, task.row.biometricUserId);
   const date = normalizeDateForFilter(task.row.date);
+
   // For imports, let the database generate the raw log_id to avoid duplicate IDs during concurrent batch saves.
   // The UI still displays the friendly ATT-YYYY-0001 format through displayId.
   const logId = undefined;
@@ -1037,6 +1282,7 @@ export default function AttendanceMonitoring() {
     severity: "success" as "success" | "error",
   });
   const [filterDate, setFilterDate] = useState("");
+  const [filterEmployee, setFilterEmployee] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [deleteAllDialog, setDeleteAllDialog] = useState(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState("");
@@ -1062,7 +1308,7 @@ export default function AttendanceMonitoring() {
   const fetchEmployeeOptions = async () => {
     const { data, error } = await supabase
       .from("employees")
-      .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status")
+      .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status, biometric_user_id")
       .order("last_name", { ascending: true });
 
     if (error) {
@@ -1076,6 +1322,7 @@ export default function AttendanceMonitoring() {
       .map((row: any) => ({
         employee_id: row.employee_id,
         name: formatEmployeeName(row) || row.employee_id,
+        biometric_user_id: row.biometric_user_id,
         position: row.position,
         outlet: row.outlet,
         status: row.status,
@@ -1108,7 +1355,7 @@ export default function AttendanceMonitoring() {
 
   useEffect(() => {
     setPage(0);
-  }, [filterDate, filterStatus]);
+  }, [filterDate, filterEmployee, filterStatus]);
 
   // Auto-compute when time changes
   const handleTimeChange = (field: "timeIn" | "timeOut", val: string) => {
@@ -1278,13 +1525,17 @@ export default function AttendanceMonitoring() {
 
     const newRecords: Attendance[] = [];
     const updatedRecords: Attendance[] = [];
+    const failedMessages: string[] = [];
     const existingByKey = new Map<string, Attendance>(
       attendances.map(
         (record) => [attendanceKey(record), record] as [string, Attendance],
       ),
     );
     const importedKeys = new Set<string>();
-    const isAbnormalImport = importFormat.toLowerCase().includes("abnormal");
+    const normalizedImportFormat = importFormat.toLowerCase();
+    const isRawAttendanceImport = normalizedImportFormat.includes("employee attendance record");
+    const isAbnormalImport = normalizedImportFormat.includes("abnormal");
+    const isVerificationImport = normalizedImportFormat.includes("attendance report");
     const tasks: SaveImportTask[] = [];
 
     for (const row of importPreview) {
@@ -1301,7 +1552,9 @@ export default function AttendanceMonitoring() {
 
       const existing = existingByKey.get(key);
 
-      if (existing && isAbnormalImport) {
+      if (existing && isRawAttendanceImport) {
+        duplicateCount++;
+      } else if (existing && (isAbnormalImport || isVerificationImport)) {
         tasks.push({
           kind: "update",
           key,
@@ -1309,7 +1562,7 @@ export default function AttendanceMonitoring() {
           row: {
             ...existing,
             ...row,
-            correctedBy: user?.name ?? "HR Admin",
+            ...(isAbnormalImport ? { correctedBy: user?.name ?? "HR Admin" } : {}),
           },
         });
       } else if (existing) {
@@ -1360,6 +1613,7 @@ export default function AttendanceMonitoring() {
         for (const result of results) {
           if (!result.ok) {
             failedCount++;
+            if (failedMessages.length < 2) failedMessages.push(result.error);
             continue;
           }
 
@@ -1418,8 +1672,8 @@ export default function AttendanceMonitoring() {
       setImportFormat("");
       setSnackbar({
         open: true,
-        message: `✅ Imported ${successCount} new record(s), updated ${updatedCount} abnormal record(s), skipped ${duplicateCount} duplicate/invalid row(s)${
-          failedCount > 0 ? `, and failed to save ${failedCount} row(s)` : ""
+        message: `✅ Imported ${successCount} new record(s), updated ${updatedCount} existing record(s), skipped ${duplicateCount} duplicate/invalid row(s)${
+          failedCount > 0 ? `, and failed to save ${failedCount} row(s): ${failedMessages.join(" | ")}` : ""
         }.`,
         severity: failedCount > 0 ? "error" : "success",
       });
@@ -1431,10 +1685,16 @@ export default function AttendanceMonitoring() {
 
   const filtered = useMemo(() => {
     const selectedDate = normalizeDateForFilter(filterDate);
+    const employeeNeedle = filterEmployee.toLowerCase().replace(/\s+/g, " ").trim();
 
     return attendances.filter((a) => {
       const recordDate = normalizeDateForFilter(a.date);
       const dateMatch = !selectedDate || recordDate === selectedDate;
+      const employeeHaystack = `${a.employee ?? ""} ${a.employeeId ?? ""}`
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      const employeeMatch = !employeeNeedle || employeeHaystack.includes(employeeNeedle);
       const hasLateMetric = toSafeNumber(a.late) > 0;
       const statusMatch =
         filterStatus === "all" ||
@@ -1442,9 +1702,9 @@ export default function AttendanceMonitoring() {
           ? hasLateMetric || normalizeStatusForFilter(a.status) === "late"
           : normalizeStatusForFilter(a.status) === filterStatus);
 
-      return dateMatch && statusMatch;
+      return dateMatch && employeeMatch && statusMatch;
     });
-  }, [attendances, filterDate, filterStatus]);
+  }, [attendances, filterDate, filterEmployee, filterStatus]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(filtered.length / rowsPerPage)),
@@ -1841,7 +2101,7 @@ export default function AttendanceMonitoring() {
           {
             label: "Visible Records",
             value: filtered.length,
-            caption: filterDate || filterStatus !== "all" ? "Records matching your filters" : "Currently displayed attendance logs",
+            caption: filterDate || filterEmployee || filterStatus !== "all" ? "Records matching your filters" : "Currently displayed attendance logs",
             icon: <FactCheckRounded />,
           },
           {
@@ -1920,7 +2180,7 @@ export default function AttendanceMonitoring() {
               Attendance Filters
             </Typography>
             <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-              Narrow records by date and attendance status without changing saved data.
+              Narrow records by date, employee, and attendance status without changing saved data.
             </Typography>
           </Box>
         </Box>
@@ -1941,6 +2201,27 @@ export default function AttendanceMonitoring() {
                 startAdornment: (
                   <InputAdornment position="start">
                     <CalendarMonthRounded sx={{ color: GREEN_UI.greenDark }} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Grid>
+          <Grid size={{ xs: 12, md: 3 }}>
+            <TextField
+              fullWidth
+              label="Search Employee"
+              value={filterEmployee}
+              onChange={(e) => {
+                setFilterEmployee(e.target.value);
+                setPage(0);
+              }}
+              placeholder="Name or Employee ID"
+              InputLabelProps={{ shrink: true }}
+              sx={softTextFieldSx}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PersonRounded sx={{ color: GREEN_UI.greenDark }} />
                   </InputAdornment>
                 ),
               }}
@@ -1974,6 +2255,7 @@ export default function AttendanceMonitoring() {
               sx={{ ...pillButtonSx, height: "56px", borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
               onClick={() => {
                 setFilterDate("");
+                setFilterEmployee("");
                 setFilterStatus("all");
                 setPage(0);
               }}

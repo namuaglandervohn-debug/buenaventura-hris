@@ -1,5 +1,5 @@
 // Buenaventura Estate — Shared Constants
-// Source: HRIS with DSS Capstone Documentation
+// Source: HRIS Capstone Documentation
 
 export const COMPANY = {
   name: 'Buenaventura Estate',
@@ -65,8 +65,8 @@ export const DEPARTMENTS = [
   'Café',
 ];
 
-// DSS Evaluation Criteria and Weights (Chapter II, Page 55–56)
-export const DSS_CRITERIA = [
+// Performance evaluation criteria and weights
+export const EVALUATION_CRITERIA = [
   { key: 'workQuality',       label: 'Work Quality',                        weight: 0.15, description: 'Accuracy, completeness, and quality of assigned tasks.' },
   { key: 'jobKnowledge',      label: 'Job Knowledge & Role Competency',     weight: 0.10, description: "Understanding of duties, skills, and ability to perform the assigned role." },
   { key: 'teamwork',          label: 'Teamwork and Cooperation',            weight: 0.10, description: "Ability to work with co-workers, supervisors, and other departments." },

@@ -35,7 +35,6 @@ interface PayrollSummaryRow {
   period_end?: string | null;
   cutoff_label?: string | null;
   total_employees?: number | string | null;
-  total_net_pay?: number | string | null;
   status?: string | null;
   endorsed_at?: string | null;
   updated_at?: string | null;
@@ -50,9 +49,6 @@ interface PayrollItemRow {
   employee_name?: string | null;
   position?: string | null;
   outlet?: string | null;
-  net_pay?: number | string | null;
-  gross_pay?: number | string | null;
-  total_deductions?: number | string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -66,20 +62,20 @@ interface PayrollPreview {
   position: string;
   outlet: string;
   period: string;
-  netPay: number;
+  createdAt: string;
   status: 'For Review' | 'Processed';
 }
 
 interface DashboardStats {
   payrollForReview: number;
   payrollReleased: number;
-  totalNetPayable: number;
+  payrollItemsQueued: number;
 }
 
 const DEFAULT_STATS: DashboardStats = {
   payrollForReview: 0,
   payrollReleased: 0,
-  totalNetPayable: 0,
+  payrollItemsQueued: 0,
 };
 
 
@@ -185,7 +181,7 @@ const isPayrollForAccountingReview = (status: unknown): boolean => {
 const isPayrollReleased = (status: unknown): boolean => {
   const normalized = normalizeText(status);
 
-  // Endorsed is the status used by PayrollComputation when Accounting releases salary.
+  // Endorsed is the status used by PayrollComputation when Accounting releases payroll records.
   // Exported is also treated as released because the schema allows it as a final payroll status.
   return normalized === 'endorsed' || normalized === 'exported';
 };
@@ -223,7 +219,7 @@ const buildDisplayIds = (items: PayrollItemRow[], summariesById: Map<string, Pay
 const fetchPayrollSummaries = async (): Promise<PayrollSummaryRow[]> => {
   const { data, error } = await supabase
     .from('payroll_summaries')
-    .select('id, payroll_id, period_start, period_end, cutoff_label, total_employees, total_net_pay, status, endorsed_at, updated_at, created_at')
+    .select('id, payroll_id, period_start, period_end, cutoff_label, total_employees, status, endorsed_at, updated_at, created_at')
     .order('period_start', { ascending: false });
 
   if (error) throw error;
@@ -236,7 +232,7 @@ const fetchPayrollItems = async (payrollIds: string[]): Promise<PayrollItemRow[]
 
   const { data, error } = await supabase
     .from('payroll_items')
-    .select('id, payroll_item_id, payroll_id, employee_id, employee_name, position, outlet, net_pay, gross_pay, total_deductions, created_at, updated_at')
+    .select('id, payroll_item_id, payroll_id, employee_id, employee_name, position, outlet, created_at, updated_at')
     .in('payroll_id', payrollIds)
     .order('created_at', { ascending: false });
 
@@ -283,18 +279,18 @@ const resolveAccountingDashboardData = async (): Promise<{
         position: String(item.position ?? '').trim() || '—',
         outlet: String(item.outlet ?? '').trim() || '—',
         period: formatPeriod(summary),
-        netPay: toNumber(item.net_pay),
+        createdAt: String(item.created_at ?? ''),
         status: uiStatusFromDb(summary?.status),
       };
     })
-    .sort((a, b) => b.netPay - a.netPay)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 5);
 
   return {
     stats: {
       payrollForReview: reviewItems.length,
       payrollReleased: releasedItems.length,
-      totalNetPayable: reviewItems.reduce((sum, item) => sum + toNumber(item.net_pay), 0),
+      payrollItemsQueued: reviewItems.length + releasedItems.length,
     },
     forReview,
   };

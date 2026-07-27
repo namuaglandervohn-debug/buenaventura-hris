@@ -20,7 +20,7 @@
         'Under Review' => 'HR is reviewing your submitted requirements.',
         'Missing Requirements' => 'Please check the pending requirements listed below.',
         'For Interview' => 'You are scheduled or being prepared for interview.',
-        'Hired' => 'Your application has been approved for hiring.',
+        'Hired' => '',
         'Not Qualified' => 'Sorry, your application did not qualify for the current opening.',
         'Archived' => 'Your applicant requirements are currently on hold and archived for review.',
     ];

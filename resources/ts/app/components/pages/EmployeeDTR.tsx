@@ -12,6 +12,7 @@ import {
   CircularProgress,
   Button,
   Chip,
+  TextField,
 } from "@mui/material";
 import {
   AccessTime,
@@ -19,7 +20,6 @@ import {
   BadgeOutlined,
   CalendarMonth,
   CheckCircleOutline,
-  PersonOutline,
   Print,
 } from "@mui/icons-material";
 import { supabase } from "../../lib/supabaseClient";
@@ -35,6 +35,7 @@ interface AttendanceLogRow {
   raw_time_in?: string | null;
   raw_time_out?: string | null;
   total_hours?: number | string | null;
+  late_minutes?: number | null;
   undertime_minutes?: number | null;
   overtime_minutes?: number | null;
   is_late?: boolean | null;
@@ -56,8 +57,11 @@ interface DTRRecord {
   pm_departure: string;
   overtime_arrival: string;
   overtime_departure: string;
+  overtime: string;
+  late: string;
   undertime: string;
   total_hours: string;
+  official_hours: string;
   remarks: string;
 }
 
@@ -98,6 +102,16 @@ function formatMinutesAsTime(totalMinutes: number) {
   return `${hours12}:${String(minutes).padStart(2, "0")} ${period}`;
 }
 
+function addMinutesToClock(value: string, minutesToAdd: number) {
+  const minutes = parseClockToMinutes(value);
+  if (minutes === null) return "";
+  return formatMinutesAsTime(minutes + minutesToAdd);
+}
+
+function formatDurationHours(minutes: number) {
+  return (Math.max(0, minutes) / 60).toFixed(2);
+}
+
 function formatDbTime(value: unknown) {
   if (!value) return "";
   const text = String(value).slice(0, 8);
@@ -105,44 +119,54 @@ function formatDbTime(value: unknown) {
   return minutes === null ? String(value) : formatMinutesAsTime(minutes);
 }
 
-function buildDtrRemarks(row: AttendanceLogRow, timeIn: string, timeOut: string) {
-  if (row.remarks) return String(row.remarks);
-  if (row.is_absent) return "Absent";
-
-  const issues: string[] = [];
-  const undertime = Number(row.undertime_minutes ?? 0);
-  const totalHours = Number(row.total_hours ?? 0);
-
-  if (!timeIn) issues.push("Missing time-in");
-  if (!timeOut) issues.push("Missing time-out");
-  if (row.is_late) issues.push("Late");
-  if (undertime > 0 || row.is_undertime) issues.push(`Undertime ${undertime} min`);
-  if (totalHours > 0 && totalHours < REQUIRED_DAILY_HOURS) issues.push("Incomplete required hours");
-  if (row.is_incomplete && issues.length === 0) issues.push("Incomplete punches");
-
-  return issues.length > 0 ? issues.join("; ") : "";
+function getDayName(year: number, month: number, day: number) {
+  return new Date(year, month, day).toLocaleDateString("en-US", { weekday: "short" });
 }
 
 function mapAttendanceLogToDTR(row: AttendanceLogRow): DTRRecord {
   const timeIn = String(row.raw_time_in ?? "").trim() || formatDbTime(row.time_in);
   const timeOut = String(row.raw_time_out ?? "").trim() || formatDbTime(row.time_out);
   const overtimeMinutes = Number(row.overtime_minutes ?? 0);
+  const lateMinutes = Number(row.late_minutes ?? 0);
   const undertimeMinutes = Number(row.undertime_minutes ?? 0);
+  const totalHours = Number(row.total_hours ?? 0);
+  const derivedOvertimeMinutes =
+    overtimeMinutes > 0
+      ? overtimeMinutes
+      : Number.isFinite(totalHours) && totalHours > REQUIRED_DAILY_HOURS
+        ? Math.round((totalHours - REQUIRED_DAILY_HOURS) * 60)
+        : 0;
+  const derivedUndertimeMinutes =
+    undertimeMinutes > 0
+      ? undertimeMinutes
+      : Number.isFinite(totalHours) && totalHours > 0 && totalHours < REQUIRED_DAILY_HOURS
+        ? Math.round((REQUIRED_DAILY_HOURS - totalHours) * 60)
+        : 0;
+  const breakOut = timeIn && timeOut ? addMinutesToClock(timeIn, 4 * 60) : "";
+  const breakIn = breakOut ? addMinutesToClock(breakOut, 60) : "";
+  const regularOut =
+    timeOut && derivedOvertimeMinutes > 0
+      ? addMinutesToClock(timeOut, -derivedOvertimeMinutes)
+      : timeOut;
 
   return {
     id: row.log_id,
     employee_id: row.employee_id,
     attendance_date: row.attendance_date,
     am_arrival: timeIn,
-    am_departure: "",
-    pm_arrival: "",
-    pm_departure: timeOut,
-    overtime_arrival: overtimeMinutes > 0 || row.is_overtime ? timeOut : "",
+    am_departure: breakOut || (timeIn ? "—" : ""),
+    pm_arrival: breakIn || (timeIn ? "—" : ""),
+    pm_departure: regularOut,
+    overtime_arrival:
+      timeOut && derivedOvertimeMinutes > 0 ? regularOut : timeOut ? "—" : "",
     overtime_departure:
-      overtimeMinutes > 0 ? `${overtimeMinutes} min` : row.is_overtime ? "Yes" : "",
-    undertime: undertimeMinutes > 0 ? `${undertimeMinutes} min` : row.is_undertime ? "Yes" : "",
-    total_hours: String(row.total_hours ?? ""),
-    remarks: buildDtrRemarks(row, timeIn, timeOut),
+      timeOut && derivedOvertimeMinutes > 0 ? timeOut : timeOut ? "—" : "",
+    overtime: timeIn || timeOut ? formatDurationHours(derivedOvertimeMinutes) : "",
+    late: timeIn || timeOut ? formatDurationHours(lateMinutes) : "",
+    undertime: timeIn || timeOut ? formatDurationHours(derivedUndertimeMinutes) : "",
+    total_hours: Number.isFinite(totalHours) && totalHours > 0 ? totalHours.toFixed(2) : "",
+    official_hours: timeIn || timeOut ? REQUIRED_DAILY_HOURS.toFixed(2) : "",
+    remarks: "",
   };
 }
 
@@ -177,20 +201,37 @@ const pillButtonSx = {
 };
 
 const tableCellSx = {
-  border: "1px solid #000",
-  padding: "3px 4px",
-  fontSize: 11,
-  lineHeight: 1.1,
+  border: "1px solid rgba(92, 118, 101, 0.28)",
+  padding: "5px 6px",
+  fontSize: 12,
+  lineHeight: 1.2,
+  color: "#26352d",
+};
+
+const tableHeaderCellSx = {
+  ...tableCellSx,
+  background: "#edf7ef",
+  color: "#0f6d3c",
+  fontWeight: 800,
+};
+
+const tableSubHeaderCellSx = {
+  ...tableCellSx,
+  background: "#f8fcf8",
+  color: "#0f6d3c",
+  fontWeight: 700,
 };
 
 const printPaperSx = {
-  p: { xs: 1.5, sm: 2.5 },
-  border: `1px solid ${GREEN_UI.border}`,
-  borderRadius: "20px",
-  maxWidth: 760,
+  p: { xs: 1.25, sm: 1.5 },
+  border: `1px solid ${GREEN_UI.borderStrong}`,
+  borderRadius: "18px",
+  width: "100%",
+  maxWidth: "none",
   mx: "auto",
   background: "#fff",
-  boxShadow: "0 16px 38px rgba(43, 91, 55, 0.08)",
+  boxShadow: "0 18px 45px rgba(43, 91, 55, 0.08)",
+  overflow: "hidden",
 
   "@media print": {
     position: "fixed",
@@ -203,6 +244,7 @@ const printPaperSx = {
     border: "none",
     borderRadius: 0,
     boxShadow: "none",
+    background: "#fff",
   },
 };
 
@@ -220,6 +262,8 @@ const printStyles = `
     .dtr-print-area,
     .dtr-print-area * {
       visibility: visible !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
     }
 
     .no-print {
@@ -228,9 +272,9 @@ const printStyles = `
 
     .dtr-table th,
     .dtr-table td {
-      padding: 2px 3px !important;
-      font-size: 9.5px !important;
-      line-height: 1 !important;
+      padding: 3px 4px !important;
+      font-size: 10.5px !important;
+      line-height: 1.05 !important;
     }
   }
 `;
@@ -241,11 +285,14 @@ export default function EmployeeDTR() {
   const [records, setRecords] = useState<DTRRecord[]>([]);
   const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const currentMonthValue = new Date().toISOString().slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthValue);
+  const [loadedLatestMonth, setLoadedLatestMonth] = useState(false);
 
-  const now = new Date();
-  const monthName = now.toLocaleString("default", { month: "long" });
-  const year = now.getFullYear();
-  const month = now.getMonth();
+  const [selectedYear, selectedMonthNumber] = selectedMonth.split("-").map(Number);
+  const year = selectedYear || new Date().getFullYear();
+  const month = Number.isFinite(selectedMonthNumber) ? selectedMonthNumber - 1 : new Date().getMonth();
+  const monthName = new Date(year, month, 1).toLocaleString("default", { month: "long" });
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const periodStart = useMemo(
     () => `${year}-${String(month + 1).padStart(2, "0")}-01`,
@@ -255,6 +302,33 @@ export default function EmployeeDTR() {
     () => `${year}-${String(month + 1).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`,
     [year, month, daysInMonth]
   );
+
+  useEffect(() => {
+    if (!user?.employeeId || loadedLatestMonth) return;
+
+    let cancelled = false;
+
+    supabase
+      .from("attendance_logs")
+      .select("attendance_date")
+      .eq("employee_id", user.employeeId)
+      .order("attendance_date", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+
+        const latestMonth = String(data?.attendance_date ?? "").slice(0, 7);
+        if (/^\d{4}-\d{2}$/.test(latestMonth)) {
+          setSelectedMonth(latestMonth);
+        }
+        setLoadedLatestMonth(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadedLatestMonth, user?.employeeId]);
 
   const fetchDTR = useCallback(async () => {
     if (!user?.employeeId) {
@@ -274,7 +348,7 @@ export default function EmployeeDTR() {
       supabase
       .from("attendance_logs")
       .select(
-        "log_id, employee_id, attendance_date, time_in, time_out, raw_time_in, raw_time_out, total_hours, undertime_minutes, overtime_minutes, is_late, is_undertime, is_overtime, is_absent, is_incomplete, remarks, validation_status"
+        "log_id, employee_id, attendance_date, time_in, time_out, raw_time_in, raw_time_out, total_hours, late_minutes, undertime_minutes, overtime_minutes, is_late, is_undertime, is_overtime, is_absent, is_incomplete, remarks, validation_status"
       )
       .eq("employee_id", user.employeeId)
       .gte("attendance_date", periodStart)
@@ -443,20 +517,40 @@ export default function EmployeeDTR() {
               </Typography>
             </Box>
 
-            <Button
-              variant="contained"
-              startIcon={<Print />}
-              onClick={() => window.print()}
-              sx={{
-                ...pillButtonSx,
-                py: 1.1,
-                bgcolor: GREEN_UI.green,
-                boxShadow: "0 12px 24px rgba(58, 168, 101, 0.25)",
-                "&:hover": { bgcolor: GREEN_UI.greenDark, boxShadow: "0 16px 28px rgba(31, 122, 70, 0.28)" },
-              }}
-            >
-              Print DTR
-            </Button>
+            <Box sx={{ display: "flex", gap: 1.25, flexWrap: "wrap", alignItems: "center" }}>
+              <TextField
+                type="month"
+                label="Month Covered"
+                size="small"
+                value={selectedMonth}
+                onChange={(event) => setSelectedMonth(event.target.value || currentMonthValue)}
+                sx={{
+                  minWidth: 185,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: "12px",
+                    bgcolor: "#fff",
+                    "& fieldset": { borderColor: GREEN_UI.border },
+                    "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
+                    "&.Mui-focused fieldset": { borderColor: GREEN_UI.green },
+                  },
+                }}
+                InputLabelProps={{ shrink: true }}
+              />
+              <Button
+                variant="contained"
+                startIcon={<Print />}
+                onClick={() => window.print()}
+                sx={{
+                  ...pillButtonSx,
+                  py: 1.1,
+                  bgcolor: GREEN_UI.green,
+                  boxShadow: "0 12px 24px rgba(58, 168, 101, 0.25)",
+                  "&:hover": { bgcolor: GREEN_UI.greenDark, boxShadow: "0 16px 28px rgba(31, 122, 70, 0.28)" },
+                }}
+              >
+                Print DTR
+              </Button>
+            </Box>
           </Box>
         </Paper>
 
@@ -529,36 +623,10 @@ export default function EmployeeDTR() {
         elevation={0}
         sx={{
           ...softCardSx,
-          p: { xs: 1, sm: 1.5 },
+          p: { xs: 0.75, sm: 1 },
           overflow: "hidden",
         }}
       >
-        <Box className="no-print" sx={{ mb: 1.5, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Box
-              sx={{
-                width: 42,
-                height: 42,
-                borderRadius: "16px",
-                display: "grid",
-                placeItems: "center",
-                bgcolor: GREEN_UI.greenSoft,
-                color: GREEN_UI.greenDark,
-              }}
-            >
-              <PersonOutline />
-            </Box>
-            <Box>
-              <Typography fontWeight={700} sx={{ color: GREEN_UI.text, letterSpacing: "-0.02em" }}>
-                Printable DTR Form
-              </Typography>
-              <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                This section is the exact area that will be included when printed.
-              </Typography>
-            </Box>
-          </Box>
-        </Box>
-
         <Paper className="dtr-print-area" elevation={0} sx={printPaperSx}>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", py: 7, gap: 2 }}>
@@ -567,64 +635,178 @@ export default function EmployeeDTR() {
             </Box>
           ) : (
             <>
-              <Typography align="center" fontWeight={700} sx={{ mb: 0.5, fontSize: 16 }}>
-                {COMPANY.name.toUpperCase()}
-              </Typography>
-              <Typography align="center" sx={{ mb: 0.5, fontSize: 10.5 }}>
-                {COMPANY.address}
-              </Typography>
-              <Typography align="center" fontWeight={700} sx={{ mb: 1, fontSize: 15 }}>
-                DAILY TIME RECORD
-              </Typography>
+              <Box
+                className="no-print"
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "minmax(240px, 1fr) auto" },
+                  alignItems: "end",
+                  gap: 1.25,
+                  p: 1.25,
+                  mb: 1.5,
+                  borderRadius: "10px",
+                  border: `1px solid ${GREEN_UI.border}`,
+                  bgcolor: "#f8fcf8",
+                }}
+              >
+                <TextField
+                  type="month"
+                  label="Month"
+                  size="small"
+                  value={selectedMonth}
+                  onChange={(event) => setSelectedMonth(event.target.value || currentMonthValue)}
+                  sx={{
+                    maxWidth: { xs: "100%", sm: 320 },
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "8px",
+                      bgcolor: "#fff",
+                      "& fieldset": { borderColor: "rgba(31, 122, 70, 0.24)" },
+                    },
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                />
+                <Box sx={{ display: "flex", gap: 1, justifyContent: { xs: "stretch", md: "flex-end" } }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<Print />}
+                    onClick={() => window.print()}
+                    sx={{
+                      ...pillButtonSx,
+                      borderRadius: "6px",
+                      minWidth: 98,
+                      bgcolor: GREEN_UI.greenDark,
+                      "&:hover": { bgcolor: "#145c35" },
+                    }}
+                  >
+                    Print
+                  </Button>
+                </Box>
+              </Box>
 
-              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0.75, mb: 1.2 }}>
-                {[
-                  ["Employee Name", displayName],
-                  ["Employee ID", user?.employeeId ?? ""],
-                  ["Position", employeeProfile?.position ?? ""],
-                  ["Department", employeeProfile?.department ?? ""],
-                  ["Outlet / Branch", employeeProfile?.outlet ?? user?.outlet ?? ""],
-                  ["Month Covered", `${monthName} ${year}`],
-                ].map(([label, value]) => (
-                  <Box key={label} sx={{ display: "grid", gridTemplateColumns: "86px 1fr", gap: 0.5, alignItems: "end" }}>
-                    <Typography sx={{ fontSize: 10.5 }}>{label}:</Typography>
-                    <Typography sx={{ borderBottom: "1px solid #000", fontSize: 10.5, minHeight: 15 }}>
-                      {value}
+              <Box
+                sx={{
+                  borderTop: `5px solid ${GREEN_UI.greenDark}`,
+                  pt: 1.25,
+                  mb: 1,
+                }}
+              >
+                <Typography align="center" sx={{ fontSize: 16, fontWeight: 900, color: GREEN_UI.greenDark }}>
+                  DAILY TIME RECORD
+                </Typography>
+                <Typography align="center" sx={{ mt: 0.25, fontSize: 13, fontWeight: 800, color: GREEN_UI.text }}>
+                  {COMPANY.name.toUpperCase()}
+                </Typography>
+                <Typography align="center" sx={{ mt: 0.15, mb: 1, fontSize: 11, color: GREEN_UI.muted }}>
+                  {COMPANY.address}
+                </Typography>
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    justifyContent: "center",
+                    gap: { xs: 0.75, sm: 2.25 },
+                    py: 0.75,
+                    borderTop: "1px solid rgba(92, 118, 101, 0.22)",
+                    borderBottom: "1px solid rgba(92, 118, 101, 0.22)",
+                    color: GREEN_UI.text,
+                  }}
+                >
+                  {[
+                    "AHW - Actual Hours Worked",
+                    "OHW - Official Hours Worked",
+                    "OT - Overtime",
+                    "LT - Lates",
+                    "UT - Undertime",
+                  ].map((item) => (
+                    <Typography key={item} sx={{ fontSize: 11, fontWeight: 700 }}>
+                      {item}
                     </Typography>
-                  </Box>
-                ))}
+                  ))}
+                </Box>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                    gap: { xs: 0.5, sm: 2 },
+                    mt: 1,
+                    mb: 1,
+                    px: { xs: 0, sm: 1 },
+                  }}
+                >
+                  {[
+                    ["Employee No.", user?.employeeId ?? ""],
+                    ["Name", displayName],
+                    ["Position", employeeProfile?.position ?? ""],
+                    ["Month", `${monthName} ${year}`],
+                  ].map(([label, value]) => (
+                    <Box key={label} sx={{ display: "grid", gridTemplateColumns: "92px 1fr", alignItems: "end", gap: 0.75 }}>
+                      <Typography sx={{ fontSize: 11.5, color: GREEN_UI.muted, fontWeight: 700 }}>
+                        {label}:
+                      </Typography>
+                      <Typography sx={{ borderBottom: "1px solid rgba(38, 53, 45, 0.55)", fontSize: 12, fontWeight: 800, minHeight: 18 }}>
+                        {value}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
               </Box>
 
               <TableContainer sx={{ overflowX: "auto" }}>
-                <Table size="small" className="dtr-table" sx={{ border: "1px solid #000", minWidth: 620 }}>
+                <Table
+                  size="small"
+                  className="dtr-table"
+                  sx={{
+                    border: "1px solid rgba(92, 118, 101, 0.35)",
+                    minWidth: 1180,
+                    width: "100%",
+                    tableLayout: "fixed",
+                    borderCollapse: "collapse",
+                    backgroundColor: "#fff",
+                  }}
+                >
                   <TableHead>
                     <TableRow>
-                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
                         Date
                       </TableCell>
-                      <TableCell colSpan={2} align="center" sx={tableCellSx}>
-                        AM
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        Day
                       </TableCell>
-                      <TableCell colSpan={2} align="center" sx={tableCellSx}>
-                        PM
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        In
                       </TableCell>
-                      <TableCell colSpan={2} align="center" sx={tableCellSx}>
+                      <TableCell colSpan={2} align="center" sx={tableHeaderCellSx}>
+                        Break
+                      </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        Out
+                      </TableCell>
+                      <TableCell colSpan={2} align="center" sx={tableHeaderCellSx}>
                         Overtime
                       </TableCell>
-                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
-                        Total Hours
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        AHW
                       </TableCell>
-                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
-                        Undertime
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        OHW
                       </TableCell>
-                      <TableCell rowSpan={2} align="center" sx={tableCellSx}>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        OT
+                      </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        LT
+                      </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
+                        UT
+                      </TableCell>
+                      <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
                         Remarks
                       </TableCell>
                     </TableRow>
 
                     <TableRow>
-                      {["Arrival", "Depart", "Arrival", "Depart", "Arrival", "Depart"].map((label, index) => (
-                        <TableCell key={`${label}-${index}`} align="center" sx={tableCellSx}>
+                      {["Out", "In", "In", "Out"].map((label, index) => (
+                        <TableCell key={`${label}-${index}`} align="center" sx={tableSubHeaderCellSx}>
                           {label}
                         </TableCell>
                       ))}
@@ -636,8 +818,9 @@ export default function EmployeeDTR() {
                       const record = recordMap.get(day);
 
                       return (
-                        <TableRow key={day}>
+                        <TableRow key={day} sx={{ bgcolor: day % 2 === 0 ? "rgba(247, 252, 248, 0.75)" : "#fff" }}>
                           <TableCell align="center" sx={tableCellSx}>{day}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{getDayName(year, month, day)}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.am_arrival ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.am_departure ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.pm_arrival ?? ""}</TableCell>
@@ -645,6 +828,9 @@ export default function EmployeeDTR() {
                           <TableCell align="center" sx={tableCellSx}>{record?.overtime_arrival ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.overtime_departure ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.total_hours ?? ""}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{record?.official_hours ?? ""}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{record?.overtime ?? ""}</TableCell>
+                          <TableCell align="center" sx={tableCellSx}>{record?.late ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.undertime ?? ""}</TableCell>
                           <TableCell align="center" sx={tableCellSx}>{record?.remarks ?? ""}</TableCell>
                         </TableRow>
@@ -654,17 +840,58 @@ export default function EmployeeDTR() {
                 </Table>
               </TableContainer>
 
-              <Typography sx={{ mt: 1.5, fontSize: 11 }}>
-                I CERTIFY on my honor that the above is a true and correct report of the hours of work performed.
-              </Typography>
-
-              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, mt: 1.2 }}>
-                <Typography sx={{ fontSize: 10.5 }}>
-                  Total Recorded Days: <b>{records.length}</b>
-                </Typography>
-                <Typography sx={{ fontSize: 10.5 }}>
-                  Total Hours: <b>{totalHours.toFixed(2)}</b>
-                </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "1.5fr 1fr" },
+                  gap: 1,
+                  mt: 1.25,
+                  alignItems: "stretch",
+                }}
+              >
+                <Box
+                  sx={{
+                    border: `1px solid ${GREEN_UI.border}`,
+                    borderRadius: "10px",
+                    bgcolor: "rgba(246, 252, 247, 0.9)",
+                    px: 1,
+                    py: 0.8,
+                  }}
+                >
+                  <Typography sx={{ fontSize: 12, color: GREEN_UI.text }}>
+                    I certify on my honor that the above is a true and correct report of the hours of work performed.
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 0.75,
+                  }}
+                >
+                  {[
+                    ["Recorded Days", records.length],
+                    ["Total Hours", totalHours.toFixed(2)],
+                  ].map(([label, value]) => (
+                    <Box
+                      key={label}
+                      sx={{
+                        border: `1px solid ${GREEN_UI.border}`,
+                        borderRadius: "10px",
+                        bgcolor: "#fff",
+                        px: 1,
+                        py: 0.8,
+                      }}
+                    >
+                      <Typography sx={{ fontSize: 11, color: GREEN_UI.muted, fontWeight: 800, textTransform: "uppercase" }}>
+                        {label}
+                      </Typography>
+                      <Typography sx={{ fontSize: 14, color: GREEN_UI.greenDark, fontWeight: 900 }}>
+                        {value}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
               </Box>
 
               <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, mt: 4 }}>
@@ -673,9 +900,11 @@ export default function EmployeeDTR() {
                     key={label}
                     align="center"
                     sx={{
-                      borderTop: "1px solid #000",
-                      fontSize: 11,
+                      borderTop: `1px solid ${GREEN_UI.greenDark}`,
+                      fontSize: 12,
                       pt: 0.35,
+                      color: GREEN_UI.text,
+                      fontWeight: 700,
                     }}
                   >
                     {label}

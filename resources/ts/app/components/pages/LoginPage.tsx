@@ -241,7 +241,7 @@ export default function LoginPage() {
                   lineHeight: 1.5,
                 }}
               >
-                with Decision Support System
+                Employee Management System
               </Typography>
 
               <Typography
@@ -525,7 +525,7 @@ export default function LoginPage() {
             textShadow: "0 2px 12px rgba(0,0,0,0.22)",
           }}
         >
-          © {new Date().getFullYear()} {COMPANY.name} · Est. {COMPANY.established} · HRIS-DSS Capstone
+          © {new Date().getFullYear()} {COMPANY.name} · Est. {COMPANY.established} · HRIS Capstone
         </Typography>
       </Container>
     </AuthBackground>

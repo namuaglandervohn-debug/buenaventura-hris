@@ -141,7 +141,7 @@ export default function GMDashboard() {
       accent: 'rgba(47, 143, 139, 0.13)',
     },
     {
-      title: 'Pending DSS Approvals',
+      title: 'Pending Evaluation Approvals',
       value: loading ? '…' : String(topEvaluations.length),
       icon: <TrendingUp />,
       color: '#d9a441',
@@ -235,7 +235,7 @@ export default function GMDashboard() {
               General Manager Dashboard
             </Typography>
             <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 1, lineHeight: 1.7, maxWidth: 650 }}>
-              Welcome, {user?.name} — monitor estate-wide operations, hiring priorities, DSS approvals,
+              Welcome, {user?.name} — monitor estate-wide operations, hiring priorities, evaluation approvals,
               and workforce activity from one soft dashboard view.
             </Typography>
           </Box>
@@ -288,7 +288,7 @@ export default function GMDashboard() {
                 {stats.eotmEmployee}
               </Typography>
               <Typography variant="body2" sx={{ opacity: 0.88 }}>
-                Highest DSS Performance Score
+                Highest Performance Score
               </Typography>
             </Box>
           </Box>
@@ -446,7 +446,7 @@ export default function GMDashboard() {
         </Grid>
       </Grid>
 
-      {/* Pending DSS Evaluations */}
+      {/* Pending Evaluations */}
       {topEvaluations.length > 0 && (
         <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 2, sm: 2.5 }, mt: 2.5 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1.5, mb: 1.5, flexWrap: 'wrap' }}>
@@ -456,7 +456,7 @@ export default function GMDashboard() {
               </Box>
               <Box>
                 <Typography variant="h6" fontWeight={700} sx={{ color: GREEN_UI.text, letterSpacing: '-0.025em' }}>
-                  DSS Evaluations — Pending Your Approval
+                  Evaluations — Pending Your Approval
                 </Typography>
                 <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
                   Performance approvals requiring General Manager review

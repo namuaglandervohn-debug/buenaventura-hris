@@ -54,9 +54,9 @@ const REPORT_TYPES: ReportType[] = [
   { value: 'attendanceLogs', label: 'Attendance Logs', icon: <GridView /> },
   { value: 'payroll', label: 'Payroll Summary', icon: <GridView /> },
   { value: 'evaluations', label: 'Performance Evaluations', icon: <BarChartIcon /> },
-  { value: 'dss', label: 'DSS Rankings', icon: <BarChartIcon /> },
+  { value: 'dss', label: 'Performance Rankings', icon: <BarChartIcon /> },
   { value: 'requests', label: 'Leave / OT / Undertime Requests', icon: <GridView /> },
-  { value: 'criteria', label: 'DSS Criteria & Weights', icon: <BarChartIcon /> },
+  { value: 'criteria', label: 'Evaluation Criteria & Weights', icon: <BarChartIcon /> },
   { value: 'systemLogs', label: 'System Logs', icon: <GridView /> },
 ];
 
@@ -254,7 +254,7 @@ const labelize = (key: string) =>
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, s => s.toUpperCase())
     .replace('Id', 'ID')
-    .replace('Dss', 'DSS');
+    .replace('Dss', 'Ranking');
 
 const getStatusColor = (value: any) => {
   const status = String(value ?? '').toLowerCase();
