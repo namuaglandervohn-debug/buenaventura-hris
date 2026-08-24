@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import {
   Box,
@@ -64,6 +64,9 @@ const EDUCATIONAL_ATTAINMENT = [
 ];
 
 const HEAR_ABOUT_OPTIONS = ['Facebook', 'Referral', 'Walk-in', 'Job Posting', 'Other'];
+const ACCEPTED_APPLICATION_FILE_TYPES = '.pdf,.doc,.docx,.jpg,.jpeg,.png';
+const ACCEPTED_APPLICATION_FILE_LABEL = 'PDF, DOC, DOCX, JPG, JPEG, and PNG';
+const SUPPORTING_DOCUMENT_EXAMPLES = 'Transcript of Records, Birth Certificate, Medical Certificate, valid ID, training certificates, or other required documents';
 
 const COUNTRIES = [
   'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia',
@@ -214,7 +217,7 @@ const EMPTY = {
 
 type FormState = typeof EMPTY;
 type FormKey = keyof FormState;
-type FieldErrors = Partial<Record<FormKey | 'resumeFiles', string>>;
+type FieldErrors = Partial<Record<FormKey | 'resumeFiles' | 'supportingFiles', string>>;
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -427,7 +430,7 @@ export default function ApplyForJobPage() {
     <DescriptionOutlined sx={stepIconSx} />,
   ];
 
-  const clearFieldError = (key: FormKey | 'resumeFiles') => {
+  const clearFieldError = (key: FormKey | 'resumeFiles' | 'supportingFiles') => {
     setFieldErrors((prev) => {
       if (!prev[key]) return prev;
       const next = { ...prev };
@@ -761,22 +764,37 @@ export default function ApplyForJobPage() {
     }
     if (stepIndex === 5) {
       if (resumeFiles.length === 0) errors.resumeFiles = 'Resume/Biodata file is required.';
+      if (supportingFiles.length === 0) errors.supportingFiles = 'At least one supporting document is required.';
       if (!formData.applicantSignature.trim()) errors.applicantSignature = 'Applicant signature/full name is required.';
       if (!formData.declarationDate) errors.declarationDate = 'Declaration date is required.';
     }
     setFieldErrors(errors);
-    if (Object.keys(errors).length > 0) { setError('Please complete the required fields before continuing.'); return false; }
+    if (Object.keys(errors).length > 0) { setError('Please complete all required fields before submitting.'); return false; }
     setError(''); return true;
   };
 
   const handleStepClick = (targetStep: number) => {
-    if (targetStep <= activeStep) { setActiveStep(targetStep); setError(''); return; }
-    for (let i = activeStep; i < targetStep; i++) if (!validateStep(i)) return;
+    setFieldErrors({});
+    setError('');
     setActiveStep(targetStep);
   };
-  const handleNext = () => { if (validateStep(activeStep) && activeStep < steps.length - 1) setActiveStep((prev) => prev + 1); };
-  const handleBack = () => { if (activeStep > 0) { setActiveStep((prev) => prev - 1); setError(''); } };
-  const validateAllSteps = () => { for (let i = 0; i < steps.length; i++) if (!validateStep(i)) { setActiveStep(i); return false; } return true; };
+  const handleNext = (event?: MouseEvent<HTMLButtonElement>) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    setFieldErrors({});
+    setError('');
+    setActiveStep((prev) => Math.min(prev + 1, steps.length - 1));
+  };
+  const handleBack = () => { if (activeStep > 0) { setActiveStep((prev) => prev - 1); setFieldErrors({}); setError(''); } };
+  const validateAllSteps = () => {
+    for (let i = 0; i < steps.length; i++) {
+      if (!validateStep(i)) {
+        setActiveStep(i);
+        return false;
+      }
+    }
+    return true;
+  };
 
   const sendApplicantIdEmail = async (payload: { applicantId: string; email: string; name: string; position: string }) => {
     const response = await fetch('/api/applications/send-applicant-id-email', {
@@ -801,6 +819,9 @@ export default function ApplyForJobPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null;
+    if (submitter?.dataset.submitApplication !== 'true') return;
+
     if (!validateAllSteps()) return;
     setSubmitting(true); setError(''); setEmailNotice('');
     try {
@@ -894,6 +915,18 @@ export default function ApplyForJobPage() {
       }
       setError(message);
     } finally { setSubmitting(false); }
+  };
+
+  const handleFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== 'Enter') return;
+
+    const target = event.target as HTMLElement;
+    const tagName = target.tagName.toLowerCase();
+    const role = target.getAttribute('role');
+
+    if (tagName === 'textarea' || tagName === 'button' || role === 'button') return;
+
+    event.preventDefault();
   };
 
   const handleCopyId = async () => { setCopyFailed(false); const ok = await copyToClipboard(applicantId); if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2500); } else setCopyFailed(true); };
@@ -1147,7 +1180,7 @@ export default function ApplyForJobPage() {
               </Stack>
             </Box>
 
-            <Box component="form" onSubmit={handleSubmit} sx={{ p: { xs: 1.5, sm: 2.5, md: 4.5 } }}>
+            <Box component="form" noValidate onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} sx={{ p: { xs: 1.5, sm: 2.5, md: 4.5 } }}>
               {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
 
               {activeStep === 0 && (
@@ -1337,19 +1370,81 @@ export default function ApplyForJobPage() {
                 <Paper elevation={0} sx={stepPaperSx}>
                   <SectionTitle icon={<DescriptionOutlined />} title="VII. Required Documents" description="Upload your resume and supporting documents." />
                   <Grid container spacing={2.5} sx={{ mt: 1 }}>
-                    <Grid size={halfGrid}><Button fullWidth component="label" variant="outlined" startIcon={<UploadFile />} sx={uploadButtonSx}><input hidden type="file" accept="*/*" onChange={(e) => { const files = Array.from(e.target.files ?? []); setResumeFiles(files.slice(0, 1)); clearFieldError('resumeFiles'); }} />{resumeFiles[0] ? `Resume: ${resumeFiles[0].name}` : 'Select Resume / Biodata'}</Button>{fieldErrors.resumeFiles && <Typography color="error" variant="caption" sx={{ mt: 1, display: 'block' }}>{fieldErrors.resumeFiles}</Typography>}</Grid>
-                    <Grid size={halfGrid}><Button fullWidth component="label" variant="outlined" startIcon={<UploadFile />} sx={uploadButtonSx}><input hidden multiple type="file" onChange={(e) => { const selectedFiles = Array.from(e.target.files ?? []); setSupportingFiles((prev) => [...prev, ...selectedFiles]); e.target.value = ''; }} />{supportingFiles.length > 0 ? `Add More Supporting Documents (${supportingFiles.length} selected)` : 'Select Supporting Documents'}</Button></Grid>
-                    <Grid size={{ xs: 12 }}>{supportingFiles.length > 0 && <Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: '#f9fcf9', border: '1px solid #cfe5d5' }}><Stack spacing={1}>{supportingFiles.map((file, fileIndex) => <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}><Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}><ArticleOutlined sx={{ color: '#166534', fontSize: 18 }} /><Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere', fontWeight: 700 }}>{file.name}</Typography></Stack><Button type="button" size="small" color="error" variant="outlined" onClick={() => setSupportingFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== fileIndex))} sx={{ textTransform: 'none', fontWeight: 600 }}>Remove</Button></Stack>)}</Stack></Paper>}</Grid>
+                    <Grid size={{ xs: 12 }}>
+                      <Alert severity="info" icon={<ArticleOutlined />} sx={{ borderRadius: 2, border: '1px solid rgba(22,101,52,0.12)', bgcolor: '#f0fdf4', color: '#14532d' }}>
+                        <Stack spacing={0.75}>
+                          <Typography variant="body2" fontWeight={700}>Accepted file types: {ACCEPTED_APPLICATION_FILE_LABEL}.</Typography>
+                          <Typography variant="body2">Resume/Biodata: upload one file only. Supporting documents are required and may include: {SUPPORTING_DOCUMENT_EXAMPLES}.</Typography>
+                          <Typography variant="body2">Use clear scanned copies or readable photos. PDF files are preferred for multi-page documents.</Typography>
+                        </Stack>
+                      </Alert>
+                    </Grid>
+                    <Grid size={halfGrid}>
+                      <Box sx={{ height: '100%', p: 2.5, borderRadius: '20px', border: fieldErrors.resumeFiles ? '1px solid #ef4444' : '1px solid rgba(22,101,52,0.18)', bgcolor: '#fbfef9' }}>
+                        <Stack spacing={2}>
+                          <Stack direction="row" spacing={1.25} alignItems="flex-start">
+                            <Box sx={{ width: 38, height: 38, borderRadius: '14px', display: 'grid', placeItems: 'center', bgcolor: '#dcfce7', color: '#166534', flexShrink: 0 }}><ArticleOutlined fontSize="small" /></Box>
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography fontWeight={800} sx={{ color: '#14532d' }}>Resume / Biodata</Typography>
+                              <Typography variant="body2" color="text.secondary">Upload one file only. Accepted: {ACCEPTED_APPLICATION_FILE_LABEL}.</Typography>
+                            </Box>
+                          </Stack>
+                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...softButtonSx, minHeight: 48, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)' }}>
+                            <input hidden type="file" accept={ACCEPTED_APPLICATION_FILE_TYPES} onChange={(e) => { const files = Array.from(e.target.files ?? []); setResumeFiles(files.slice(0, 1)); clearFieldError('resumeFiles'); }} />
+                            {resumeFiles[0] ? 'Replace Resume' : 'Select Resume'}
+                          </Button>
+                          {resumeFiles[0] ? (
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4' }}>
+                              <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}><CheckCircleOutlineRounded sx={{ color: '#15803d', fontSize: 18 }} /><Typography variant="body2" fontWeight={700} sx={{ color: '#14532d', overflowWrap: 'anywhere' }}>{resumeFiles[0].name}</Typography></Stack>
+                              <Button type="button" size="small" color="error" variant="outlined" onClick={() => setResumeFiles([])} sx={{ textTransform: 'none', fontWeight: 700 }}>Remove</Button>
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">Required before submitting the application.</Typography>
+                          )}
+                          {fieldErrors.resumeFiles && <Typography color="error" variant="caption" fontWeight={700}>{fieldErrors.resumeFiles}</Typography>}
+                        </Stack>
+                      </Box>
+                    </Grid>
+                    <Grid size={halfGrid}>
+                      <Box sx={{ height: '100%', p: 2.5, borderRadius: '20px', border: fieldErrors.supportingFiles ? '1px solid #ef4444' : '1px solid rgba(22,101,52,0.18)', bgcolor: '#fbfef9' }}>
+                        <Stack spacing={2}>
+                          <Stack direction="row" spacing={1.25} alignItems="flex-start">
+                            <Box sx={{ width: 38, height: 38, borderRadius: '14px', display: 'grid', placeItems: 'center', bgcolor: '#dcfce7', color: '#166534', flexShrink: 0 }}><DescriptionOutlined fontSize="small" /></Box>
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography fontWeight={800} sx={{ color: '#14532d' }}>Supporting Documents</Typography>
+                              <Typography variant="body2" color="text.secondary">Upload at least one file. Examples: valid ID, certificates, or records.</Typography>
+                            </Box>
+                          </Stack>
+                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...softButtonSx, minHeight: 48, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)' }}>
+                            <input hidden multiple type="file" accept={ACCEPTED_APPLICATION_FILE_TYPES} onChange={(e) => { const selectedFiles = Array.from(e.target.files ?? []); setSupportingFiles((prev) => [...prev, ...selectedFiles]); clearFieldError('supportingFiles'); e.target.value = ''; }} />
+                            {supportingFiles.length > 0 ? `Add Documents (${supportingFiles.length} selected)` : 'Select Documents'}
+                          </Button>
+                          {supportingFiles.length > 0 ? (
+                            <Stack spacing={1}>
+                              {supportingFiles.map((file, fileIndex) => (
+                                <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4' }}>
+                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}><CheckCircleOutlineRounded sx={{ color: '#15803d', fontSize: 18 }} /><Typography variant="body2" fontWeight={700} sx={{ color: '#14532d', overflowWrap: 'anywhere' }}>{file.name}</Typography></Stack>
+                                  <Button type="button" size="small" color="error" variant="outlined" onClick={() => setSupportingFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== fileIndex))} sx={{ textTransform: 'none', fontWeight: 700 }}>Remove</Button>
+                                </Stack>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">Required before submitting the application. Accepted: {ACCEPTED_APPLICATION_FILE_LABEL}.</Typography>
+                          )}
+                          {fieldErrors.supportingFiles && <Typography color="error" variant="caption" fontWeight={700}>{fieldErrors.supportingFiles}</Typography>}
+                        </Stack>
+                      </Box>
+                    </Grid>
                     <Grid size={{ xs: 12 }}><Typography variant="h6" fontWeight={700} sx={{ color: '#14532d', mt: 1 }}>VIII. Applicant Declaration</Typography></Grid>
-                    <Grid size={halfGrid}><TextField fullWidth required label="Applicant's Signature / Full Name" value={formData.applicantSignature} onChange={setUpperText('applicantSignature')} error={!!fieldErrors.applicantSignature} helperText={fieldErrors.applicantSignature} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
-                    <Grid size={halfGrid}><TextField fullWidth required type="date" label="Date" value={formData.declarationDate} onChange={set('declarationDate')} error={!!fieldErrors.declarationDate} helperText={fieldErrors.declarationDate} InputLabelProps={{ shrink: true }} sx={textFieldSx} /></Grid>
+                    <Grid size={halfGrid}><TextField fullWidth required label="Applicant's Signature / Full Name" value={formData.applicantSignature} onChange={(event) => { setUpperText('applicantSignature')(event); clearFieldError('applicantSignature'); }} error={!!fieldErrors.applicantSignature} helperText={fieldErrors.applicantSignature} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
+                    <Grid size={halfGrid}><TextField fullWidth required type="date" label="Date" value={formData.declarationDate} onChange={(event) => { set('declarationDate')(event); clearFieldError('declarationDate'); }} error={!!fieldErrors.declarationDate} helperText={fieldErrors.declarationDate} InputLabelProps={{ shrink: true }} sx={textFieldSx} /></Grid>
                   </Grid>
                 </Paper>
               )}
 
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems="center" sx={{ mt: 3, pt: 2 }}>
                 <Button type="button" variant="outlined" startIcon={<ArrowBackRounded />} onClick={activeStep === 0 ? () => navigate('/') : handleBack} sx={{ ...softButtonSx, px: { xs: 2.5, sm: 5 }, py: 1.5, borderColor: '#166534', color: '#166534', minWidth: 160, width: { xs: '100%', sm: 'auto' }, background: '#ffffff' }}>{activeStep === 0 ? 'Cancel' : 'Back'}</Button>
-                {activeStep < steps.length - 1 ? <Button type="button" variant="contained" endIcon={<ArrowForwardRounded />} onClick={handleNext} sx={{ ...softButtonSx, px: { xs: 2.5, sm: 6 }, py: 1.5, minWidth: 180, width: { xs: '100%', sm: 'auto' }, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)', boxShadow: '0 12px 25px rgba(22,101,52,0.25)' }}>Next Step</Button> : <Button type="submit" variant="contained" startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : <Send />} disabled={submitting} sx={{ ...softButtonSx, px: { xs: 2.5, sm: 6 }, py: 1.5, minWidth: 220, width: { xs: '100%', sm: 'auto' }, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)', boxShadow: '0 12px 25px rgba(22,101,52,0.25)' }}>{submitting ? 'Submitting...' : 'Submit Application'}</Button>}
+                {activeStep < steps.length - 1 ? <Button type="button" variant="contained" endIcon={<ArrowForwardRounded />} onClick={handleNext} sx={{ ...softButtonSx, px: { xs: 2.5, sm: 6 }, py: 1.5, minWidth: 180, width: { xs: '100%', sm: 'auto' }, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)', boxShadow: '0 12px 25px rgba(22,101,52,0.25)' }}>Next Step</Button> : <Button type="submit" data-submit-application="true" variant="contained" startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : <Send />} disabled={submitting} sx={{ ...softButtonSx, px: { xs: 2.5, sm: 6 }, py: 1.5, minWidth: 220, width: { xs: '100%', sm: 'auto' }, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)', boxShadow: '0 12px 25px rgba(22,101,52,0.25)' }}>{submitting ? 'Submitting...' : 'Submit Application'}</Button>}
               </Stack>
             </Box>
           </Paper>

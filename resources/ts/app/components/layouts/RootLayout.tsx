@@ -37,7 +37,7 @@ const ALL_MENU_ITEMS = [
   { text: 'User Accounts',     icon: <ManageAccounts />,     path: '/dashboard/users',            roles: ['hr'] },
   { text: 'Employees',         icon: <Groups />,             path: '/dashboard/employees',        roles: ['hr','supervisor','gm'] },
   { text: 'Schedule',          icon: <CalendarMonth />,      path: '/dashboard/schedule',         roles: ['hr','supervisor','employee'] },
-  { text: 'My DTR', icon: <BadgeOutlined />, path: '/dashboard/dtr', roles: ['employee'] },
+  { text: 'DTR', icon: <BadgeOutlined />, path: '/dashboard/dtr', roles: ['hr','employee'] },
   { text: 'Attendance',        icon: <Schedule />,           path: '/dashboard/attendance',       roles: ['hr','supervisor'] },
   { text: 'Requests',          icon: <Assignment />,         path: '/dashboard/requests',         roles: ['hr','supervisor','employee'] },
   { text: 'Payroll',           icon: <Payments />,           path: '/dashboard/payroll',          roles: ['hr','accounting'] },

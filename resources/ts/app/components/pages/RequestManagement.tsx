@@ -47,6 +47,7 @@ import {
   PlaylistAddCheck,
   InfoOutlined,
   ManageSearch,
+  EditOutlined,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from "../../lib/supabaseClient";
@@ -88,6 +89,9 @@ interface EmployeeLeaveDirectoryRow {
   position: string;
   department: string;
 }
+
+type LeaveEntitlementMap = Record<string, Record<string, number>>;
+type LeaveCreditFormState = Record<string, string>;
 
 interface NewRequestState {
   type: RequestType;
@@ -428,13 +432,18 @@ export default function RequestManagement() {
   const [error, setError] = useState<string | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const [viewDialog, setViewDialog] = useState(false);
+  const [balanceEditDialog, setBalanceEditDialog] = useState(false);
   const [selectedReq, setSelectedReq] = useState<RequestRecord | null>(null);
+  const [selectedBalanceEmployee, setSelectedBalanceEmployee] = useState<EmployeeLeaveDirectoryRow | null>(null);
   const [noteInput, setNoteInput] = useState('');
   const [newRequest, setNewRequest] = useState<NewRequestState>(EMPTY);
+  const [leaveEntitlementsByEmployee, setLeaveEntitlementsByEmployee] = useState<LeaveEntitlementMap>({});
+  const [balanceCreditForm, setBalanceCreditForm] = useState<LeaveCreditFormState>({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState(0);
   const [search, setSearch] = useState('');
   const [leaveBalanceSearch, setLeaveBalanceSearch] = useState('');
+  const [myLeaveTab, setMyLeaveTab] = useState(0);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -527,6 +536,41 @@ export default function RequestManagement() {
     );
   };
 
+  const fetchEmployeeLeaveBalances = async (employeeIdOverride?: string | null) => {
+    try {
+      let query = supabase
+        .from('employee_leave_balances')
+        .select('employee_id, leave_type, available');
+
+      if (isEmployee && !isHR && !isSupervisor && !isGM) {
+        const employeeIdForFilter = employeeIdOverride ?? currentEmployeeId;
+        if (!employeeIdForFilter) {
+          setLeaveEntitlementsByEmployee({});
+          return;
+        }
+        query = query.eq('employee_id', employeeIdForFilter);
+      }
+
+      const { data, error: balanceError } = await query;
+      if (balanceError) throw balanceError;
+
+      const nextMap: LeaveEntitlementMap = {};
+      (data ?? []).forEach((row: any) => {
+        const employeeId = row.employee_id ?? '';
+        const leaveType = row.leave_type ?? '';
+        if (!employeeId || !leaveType) return;
+
+        if (!nextMap[employeeId]) nextMap[employeeId] = {};
+        nextMap[employeeId][leaveType] = Number(row.available ?? DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0);
+      });
+
+      setLeaveEntitlementsByEmployee(nextMap);
+    } catch (e) {
+      console.warn('Could not load edited leave balances. Default entitlements will be used.', e);
+      setLeaveEntitlementsByEmployee({});
+    }
+  };
+
   const fetchRequests = async (employeeIdOverride?: string | null) => {
     setLoading(true);
     setError(null);
@@ -575,6 +619,7 @@ export default function RequestManagement() {
         } else {
           setEmployeeLeaveDirectory([]);
         }
+        await fetchEmployeeLeaveBalances(employeeId);
         await fetchRequests(employeeId);
       } catch (e: any) {
         if (!active) return;
@@ -691,8 +736,10 @@ export default function RequestManagement() {
         setSelectedReq({ ...updatedRecord, requestId: selectedReq.requestId });
       }
       setSnackbar({ open: true, message: successMsg, severity: 'success' });
+      return true;
     } catch (e: any) {
       setSnackbar({ open: true, message: `Failed to update request: ${e.message ?? 'Unknown error'}`, severity: 'error' });
+      return false;
     }
   };
 
@@ -816,6 +863,11 @@ export default function RequestManagement() {
 
   const displayData = tabData[tab]?.data ?? searchedRequests;
 
+  const getAvailableLeaveCredits = (employeeId: string | null | undefined, leaveType: string) => {
+    if (!employeeId) return DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0;
+    return leaveEntitlementsByEmployee[employeeId]?.[leaveType] ?? DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0;
+  };
+
   const requestStats = [
     {
       label: 'Total Requests',
@@ -843,7 +895,8 @@ export default function RequestManagement() {
     },
   ];
 
-  const leaveBalances = Object.entries(DEFAULT_LEAVE_ENTITLEMENTS).map(([leaveType, available]) => {
+  const leaveBalances = Object.keys(DEFAULT_LEAVE_ENTITLEMENTS).map(leaveType => {
+    const available = getAvailableLeaveCredits(currentEmployeeId, leaveType);
     const approvedDays = requests
       .filter(request =>
         request.type === 'Leave' &&
@@ -862,7 +915,8 @@ export default function RequestManagement() {
   });
 
   const employeeLeaveBalanceRows = employeeLeaveDirectory.map(employee => {
-    const balances = Object.entries(DEFAULT_LEAVE_ENTITLEMENTS).map(([leaveType, available]) => {
+    const balances = Object.keys(DEFAULT_LEAVE_ENTITLEMENTS).map(leaveType => {
+      const available = getAvailableLeaveCredits(employee.employeeId, leaveType);
       const approvedDays = requests
         .filter(request =>
           request.type === 'Leave' &&
@@ -874,6 +928,8 @@ export default function RequestManagement() {
 
       return {
         leaveType,
+        available,
+        used: approvedDays,
         remaining: Math.max(available - approvedDays, 0),
       };
     });
@@ -898,6 +954,276 @@ export default function RequestManagement() {
           .includes(normalizedLeaveBalanceSearch)
       )
     : employeeLeaveBalanceRows;
+
+  const openRequestDetails = (request: RequestRecord) => {
+    setSelectedReq(request);
+    setNoteInput('');
+    setViewDialog(true);
+  };
+
+  const openBalanceEditDialog = (employee: EmployeeLeaveDirectoryRow) => {
+    setSelectedBalanceEmployee(employee);
+    setBalanceCreditForm(
+      Object.fromEntries(
+        LEAVE_TYPES.map(leaveType => [
+          leaveType,
+          String(getAvailableLeaveCredits(employee.employeeId, leaveType)),
+        ])
+      )
+    );
+    setBalanceEditDialog(true);
+  };
+
+  const updateBalanceCreditInput = (leaveType: string, value: string) => {
+    setBalanceCreditForm(prev => ({
+      ...prev,
+      [leaveType]: value,
+    }));
+  };
+
+  const saveEditedLeaveBalances = async () => {
+    if (!selectedBalanceEmployee) return;
+
+    const rows = LEAVE_TYPES.map(leaveType => {
+      const parsedValue = Number(balanceCreditForm[leaveType]);
+      return {
+        employee_id: selectedBalanceEmployee.employeeId,
+        leave_type: leaveType,
+        available: parsedValue,
+      };
+    });
+
+    const hasInvalidValue = rows.some(row => !Number.isFinite(row.available) || row.available < 0);
+    if (hasInvalidValue) {
+      setSnackbar({ open: true, message: 'Leave credits must be valid zero or positive numbers.', severity: 'error' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { error: upsertError } = await supabase
+        .from('employee_leave_balances')
+        .upsert(rows, { onConflict: 'employee_id,leave_type' });
+
+      if (upsertError) throw upsertError;
+
+      setLeaveEntitlementsByEmployee(prev => ({
+        ...prev,
+        [selectedBalanceEmployee.employeeId]: Object.fromEntries(rows.map(row => [row.leave_type, row.available])),
+      }));
+      setBalanceEditDialog(false);
+      setSelectedBalanceEmployee(null);
+      setSnackbar({ open: true, message: `Leave balances updated for ${selectedBalanceEmployee.name}.`, severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({
+        open: true,
+        message: `Failed to update leave balances: ${e.message ?? 'Unknown error'}`,
+        severity: 'error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const formatCreditValue = (value: number) => Number.isInteger(value) ? String(value) : value.toFixed(3);
+  const myLeaveRequests = requests.filter(request => request.type === 'Leave');
+  const myLeaveTabLabels = [
+    'My Leave Credits',
+    'My Leave Application',
+  ];
+
+  const myLeaveCreditView = (
+    <>
+      <Grid container spacing={1.5}>
+        {leaveBalances.map(balance => (
+          <Grid key={balance.leaveType} size={{ xs: 12, sm: 6 }}>
+            <Paper
+              elevation={0}
+              sx={{
+                borderRadius: '4px',
+                border: '1px solid rgba(0, 128, 115, 0.18)',
+                bgcolor: '#ffffff',
+                overflow: 'hidden',
+                minHeight: 148,
+              }}
+            >
+              <Box sx={{ p: 2.25, textAlign: 'center' }}>
+                <Typography
+                  sx={{
+                    fontSize: { xs: '2.35rem', sm: '3.2rem' },
+                    lineHeight: 1,
+                    color: '#73798d',
+                    fontWeight: 300,
+                    letterSpacing: 0,
+                  }}
+                >
+                  {formatCreditValue(balance.remaining)}
+                </Typography>
+              </Box>
+              <Box sx={{ bgcolor: GREEN_UI.greenDark, color: '#ffffff', py: 0.75, px: 1.5, textAlign: 'center' }}>
+                <Typography fontWeight={700} variant="body2" sx={{ fontFamily: 'inherit' }}>
+                  {balance.leaveType}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1, px: 1.5, py: 1 }}>
+                <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
+                  Available: {formatCreditValue(balance.available)}
+                </Typography>
+                <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700, textAlign: 'right' }}>
+                  Used: {formatCreditValue(balance.used)}
+                </Typography>
+              </Box>
+            </Paper>
+          </Grid>
+        ))}
+      </Grid>
+      <Alert severity="info" sx={{ mt: 1.5, borderRadius: '10px', border: `1px solid ${GREEN_UI.border}` }}>
+        Unused leave credits remain available until the end of the current leave cycle. Only final HR-approved leave requests reduce balances.
+      </Alert>
+    </>
+  );
+
+  const myLeaveApplicationView = (
+    <TableContainer component={Paper} elevation={0} sx={{ borderRadius: '4px', border: '1px solid rgba(0, 128, 115, 0.18)', overflowX: 'auto' }}>
+      <Table sx={{ minWidth: 1120 }}>
+        <TableHead>
+          <TableRow sx={{ '& th': { bgcolor: GREEN_UI.greenDark, color: '#ffffff', fontWeight: 700, py: 1.35, fontFamily: 'inherit' } }}>
+            <TableCell>Request ID</TableCell>
+            <TableCell>Leave Type</TableCell>
+            <TableCell>Date Coverage</TableCell>
+            <TableCell>Time / Total</TableCell>
+            <TableCell>Reason</TableCell>
+            <TableCell>Submitted</TableCell>
+            <TableCell>Status</TableCell>
+            <TableCell align="center">Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {loading ? (
+            <TableRow>
+              <TableCell colSpan={8} align="center" sx={{ py: 5 }}>
+                <CircularProgress size={24} sx={{ color: GREEN_UI.green }} />
+              </TableCell>
+            </TableRow>
+          ) : myLeaveRequests.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} align="center" sx={{ py: 5, color: GREEN_UI.muted }}>
+                No leave applications found.
+              </TableCell>
+            </TableRow>
+          ) : (
+            myLeaveRequests.map(request => (
+              <TableRow key={request.id} hover sx={{ '& td': { color: GREEN_UI.text, borderColor: 'rgba(0, 128, 115, 0.12)' } }}>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  <Chip
+                    icon={<Badge />}
+                    label={request.requestId}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      fontWeight: 600,
+                      bgcolor: '#f8fcf5',
+                      borderColor: GREEN_UI.border,
+                      '& .MuiChip-icon': { color: GREEN_UI.greenDark },
+                    }}
+                  />
+                </TableCell>
+                <TableCell>{request.leaveType || 'Leave'}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {formatDate(request.startDate)} {request.endDate && request.endDate !== request.startDate ? `- ${formatDate(request.endDate)}` : ''}
+                </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {request.totalDays ?? computeTotalDays(request.startDate, request.endDate)} day(s)
+                </TableCell>
+                <TableCell sx={{ maxWidth: 260 }}>
+                  <Tooltip title={request.reason || 'No reason provided'}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        color: GREEN_UI.muted,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {request.reason || '-'}
+                    </Typography>
+                  </Tooltip>
+                </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(request.submittedDate)}</TableCell>
+                <TableCell>
+                  <Chip
+                    label={STATUS_CHIP[request.status]?.label ?? request.status}
+                    size="small"
+                    variant="outlined"
+                    sx={requestStatusChipSx(request.status)}
+                  />
+                </TableCell>
+                <TableCell align="center">
+                  <Button
+                    size="small"
+                    variant="contained"
+                    startIcon={<VisibilityOutlined />}
+                    onClick={() => openRequestDetails(request)}
+                    sx={{
+                      ...pillButtonSx,
+                      py: 0.45,
+                      bgcolor: GREEN_UI.green,
+                      fontFamily: 'inherit',
+                      '&:hover': { bgcolor: GREEN_UI.greenDark },
+                    }}
+                  >
+                    View
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+
+  const myLeaveLayout = (
+    <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
+      <Box sx={{ mb: 1.5 }}>
+        <Typography variant="h6" fontWeight={800} sx={{ color: GREEN_UI.text }}>
+          My Leave
+        </Typography>
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+        <Tabs
+          value={myLeaveTab}
+          onChange={(_, value) => setMyLeaveTab(value)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{
+            flex: '1 1 520px',
+            minHeight: 48,
+            '& .MuiTabs-indicator': { bgcolor: GREEN_UI.greenDark, height: 2 },
+            '& .MuiTab-root': {
+              minHeight: 48,
+              px: { xs: 1.2, md: 2.4 },
+              textTransform: 'uppercase',
+              letterSpacing: 0,
+              color: GREEN_UI.muted,
+              fontWeight: 700,
+              fontSize: '0.78rem',
+              fontFamily: 'inherit',
+            },
+            '& .Mui-selected': { color: `${GREEN_UI.text} !important` },
+          }}
+        >
+          {myLeaveTabLabels.map((label, index) => (
+            <Tab key={label} label={label} value={index} />
+          ))}
+        </Tabs>
+      </Box>
+      {myLeaveTab === 0 && myLeaveCreditView}
+      {myLeaveTab === 1 && myLeaveApplicationView}
+    </Paper>
+  );
 
   const resetNewRequestType = (type: RequestType) => {
     setNewRequest(prev => ({
@@ -1014,18 +1340,19 @@ export default function RequestManagement() {
                   </TableCell>
                 ))}
                 <TableCell align="center">Total Remaining</TableCell>
+                <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {employeeLeaveBalanceRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                  <TableCell colSpan={LEAVE_TYPES.length + 5} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
                     No employee records found.
                   </TableCell>
                 </TableRow>
               ) : filteredEmployeeLeaveBalanceRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                  <TableCell colSpan={LEAVE_TYPES.length + 5} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
                     No employees match your search.
                   </TableCell>
                 </TableRow>
@@ -1072,6 +1399,24 @@ export default function RequestManagement() {
                       <Typography fontWeight={900} sx={{ color: GREEN_UI.greenDark }}>
                         {employee.totalRemaining}
                       </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<EditOutlined />}
+                        onClick={() => openBalanceEditDialog(employee)}
+                        sx={{
+                          ...pillButtonSx,
+                          py: 0.35,
+                          borderColor: GREEN_UI.borderStrong,
+                          color: GREEN_UI.greenDark,
+                          bgcolor: '#ffffff',
+                          '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+                        }}
+                      >
+                        Edit
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -1450,6 +1795,8 @@ export default function RequestManagement() {
         </Alert>
       )}
 
+      {isEmployee ? myLeaveLayout : (
+      <>
       <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5 }}>
           <Box
@@ -1793,6 +2140,8 @@ export default function RequestManagement() {
       </TableContainer>
 
       {leaveBalanceSection}
+      </>
+      )}
 
       <Dialog
         open={openDialog}
@@ -2149,6 +2498,85 @@ export default function RequestManagement() {
               </Button>
             </>
           )}
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={balanceEditDialog}
+        onClose={() => setBalanceEditDialog(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: { xs: '22px', sm: '30px' },
+            overflow: 'hidden',
+            border: `1px solid ${GREEN_UI.border}`,
+            background: '#fbfff9',
+            boxShadow: '0 28px 70px rgba(27, 73, 37, 0.18)',
+          },
+        }}
+      >
+        <DialogTitle
+          fontWeight={700}
+          sx={{
+            px: { xs: 2, sm: 3 },
+            py: 2.25,
+            background: 'linear-gradient(135deg, #ffffff 0%, #eef9ea 100%)',
+            borderBottom: `1px solid ${GREEN_UI.border}`,
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <EditOutlined sx={{ color: GREEN_UI.greenDark }} />
+            <Box sx={{ minWidth: 0 }}>
+              <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
+                Edit Employee Leave Balances
+              </Typography>
+              {selectedBalanceEmployee && (
+                <Typography variant="caption" sx={{ color: GREEN_UI.muted, display: 'block' }}>
+                  {selectedBalanceEmployee.name} - {selectedBalanceEmployee.employeeId}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: { xs: 2, sm: 3 }, bgcolor: '#fbfff9' }}>
+          <Alert severity="info" sx={{ mt: 2, mb: 2, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
+            Enter the employee&apos;s available leave credits. Remaining balances are computed after subtracting final HR-approved leave requests.
+          </Alert>
+          <Grid container spacing={2}>
+            {LEAVE_TYPES.map(leaveType => (
+              <Grid key={leaveType} size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  type="number"
+                  label={leaveType}
+                  value={balanceCreditForm[leaveType] ?? ''}
+                  onChange={event => updateBalanceCreditInput(leaveType, event.target.value)}
+                  inputProps={{ min: 0, step: 0.001 }}
+                  InputLabelProps={{ shrink: true }}
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+            ))}
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, pt: 1, gap: 1, flexWrap: 'wrap', bgcolor: '#fbfff9' }}>
+          <Button onClick={() => setBalanceEditDialog(false)} startIcon={<Close />} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={saveEditedLeaveBalances}
+            disabled={saving}
+            startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <DoneAll />}
+            sx={{
+              ...pillButtonSx,
+              bgcolor: GREEN_UI.green,
+              '&:hover': { bgcolor: GREEN_UI.greenDark },
+            }}
+          >
+            {saving ? 'Saving...' : 'Save Balances'}
+          </Button>
         </DialogActions>
       </Dialog>
 

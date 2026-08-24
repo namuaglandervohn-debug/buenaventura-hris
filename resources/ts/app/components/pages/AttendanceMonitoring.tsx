@@ -186,6 +186,7 @@ type SaveImportTask = {
   kind: "create" | "update";
   key: string;
   row: Partial<Attendance> & { correctedBy?: string };
+  employee?: EmployeeOption | null;
   existingId?: string;
 };
 
@@ -768,8 +769,12 @@ function parseAttendanceReportDetailRows(
   return parsedRows;
 }
 
+function attendanceKeyFromParts(employeeIdOrName: unknown, dateValue: unknown) {
+  return `${normalizeCell(employeeIdOrName).toLowerCase()}__${normalizeDateForFilter(dateValue)}`;
+}
+
 function attendanceKey(row: Partial<Attendance>) {
-  return `${normalizeCell(row.employee).toLowerCase()}__${normalizeCell(row.date)}`;
+  return attendanceKeyFromParts(row.employeeId ?? row.employee, row.date);
 }
 
 function normalizeDateForFilter(value: unknown) {
@@ -954,6 +959,51 @@ async function resolveEmployeeForAttendance(
   });
 
   return match ? { ...match, name: formatEmployeeName(match) || match.employee_id } : null;
+}
+
+function mapEmployeeOption(row: any): EmployeeOption {
+  return {
+    employee_id: row.employee_id,
+    name: formatEmployeeName(row) || row.employee_id,
+    biometric_user_id: row.biometric_user_id,
+    position: row.position,
+    outlet: row.outlet,
+    status: row.status,
+  };
+}
+
+function normalizeEmployeeLookupValue(value: unknown) {
+  return normalizeCell(value).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function findEmployeeOptionForAttendance(
+  employees: EmployeeOption[],
+  employeeValue: unknown,
+  biometricUserId?: unknown,
+) {
+  const clean = normalizeCell(employeeValue);
+  const biometricId = normalizeCell(biometricUserId);
+  if (!clean && !biometricId) return null;
+
+  if (biometricId) {
+    const biometricMatch = employees.find(
+      (employee) => normalizeCell(employee.biometric_user_id) === biometricId,
+    );
+    if (biometricMatch) return biometricMatch;
+  }
+
+  if (/^EMP-\d{4}-\d+$/i.test(clean)) {
+    const idMatch = employees.find(
+      (employee) => normalizeCell(employee.employee_id).toLowerCase() === clean.toLowerCase(),
+    );
+    if (idMatch) return idMatch;
+  }
+
+  const normalizedNeedle = normalizeEmployeeLookupValue(clean);
+  return employees.find((employee) => {
+    const name = normalizeEmployeeLookupValue(employee.name);
+    return name === normalizedNeedle || name.includes(normalizedNeedle) || normalizedNeedle.includes(name);
+  }) ?? null;
 }
 
 function buildAttendancePayload(row: Partial<Attendance>, employee: EmployeeOption | null, logId?: string) {
@@ -1229,7 +1279,7 @@ async function readErrorMessage(res: Response, fallback: string) {
 }
 
 async function saveImportTask(task: SaveImportTask): Promise<ImportSaveResult> {
-  const employee = await resolveEmployeeForAttendance(task.row.employee, task.row.biometricUserId);
+  const employee = task.employee ?? await resolveEmployeeForAttendance(task.row.employee, task.row.biometricUserId);
   const date = normalizeDateForFilter(task.row.date);
 
   // For imports, let the database generate the raw log_id to avoid duplicate IDs during concurrent batch saves.
@@ -1319,14 +1369,7 @@ export default function AttendanceMonitoring() {
 
     setEmployeeOptions((data ?? [])
       .filter((row: any) => String(row.status ?? "Active").toLowerCase() === "active")
-      .map((row: any) => ({
-        employee_id: row.employee_id,
-        name: formatEmployeeName(row) || row.employee_id,
-        biometric_user_id: row.biometric_user_id,
-        position: row.position,
-        outlet: row.outlet,
-        status: row.status,
-      })));
+      .map(mapEmployeeOption));
   };
 
   const fetchAttendance = async () => {
@@ -1537,43 +1580,137 @@ export default function AttendanceMonitoring() {
     const isAbnormalImport = normalizedImportFormat.includes("abnormal");
     const isVerificationImport = normalizedImportFormat.includes("attendance report");
     const tasks: SaveImportTask[] = [];
+    const resolvedRows: Array<{
+      key: string;
+      row: Partial<Attendance> & { biometricUserId?: string };
+      employee: EmployeeOption;
+      date: string;
+    }> = [];
 
-    for (const row of importPreview) {
-      const employee = normalizeCell(row.employee);
-      const date = normalizeCell(row.date);
-      const key = attendanceKey(row);
+    try {
+      let importEmployees = employeeOptions;
 
-      if (!employee || !date || importedKeys.has(key)) {
-        duplicateCount++;
-        continue;
+      if (importEmployees.length === 0) {
+        const { data, error } = await supabase
+          .from("employees")
+          .select("employee_id, first_name, middle_name, last_name, suffix, position, outlet, status, biometric_user_id")
+          .limit(2000);
+
+        if (error) throw error;
+        importEmployees = (data ?? []).map(mapEmployeeOption);
       }
 
-      importedKeys.add(key);
+      for (let rowIndex = 0; rowIndex < importPreview.length; rowIndex++) {
+        const row = importPreview[rowIndex];
+        const date = normalizeDateForFilter(row.date);
+        const employee = findEmployeeOptionForAttendance(importEmployees, row.employee, row.biometricUserId);
+        const key = employee && date ? attendanceKeyFromParts(employee.employee_id, date) : "";
 
-      const existing = existingByKey.get(key);
+        if (!employee || !date || importedKeys.has(key)) {
+          duplicateCount++;
+        } else {
+          importedKeys.add(key);
+          resolvedRows.push({
+            key,
+            row: {
+              ...row,
+              employee: employee.name,
+              employeeId: employee.employee_id,
+              date,
+            },
+            employee,
+            date,
+          });
+        }
 
-      if (existing && isRawAttendanceImport) {
-        duplicateCount++;
-      } else if (existing && (isAbnormalImport || isVerificationImport)) {
-        tasks.push({
-          kind: "update",
-          key,
-          existingId: existing.id,
-          row: {
-            ...existing,
-            ...row,
-            ...(isAbnormalImport ? { correctedBy: user?.name ?? "HR Admin" } : {}),
-          },
+        if (rowIndex % 50 === 0 || rowIndex === importPreview.length - 1) {
+          setImportProgress({
+            current: rowIndex + 1,
+            total: importPreview.length,
+            failed: 0,
+          });
+          await waitForBrowserPaint();
+        }
+      }
+
+      const employeeIds = [...new Set(resolvedRows.map((row) => row.employee.employee_id))];
+      const dates = [...new Set(resolvedRows.map((row) => row.date))];
+      const employeeIdSet = new Set(employeeIds);
+      const employeeNameToId = new Map<string, string>();
+
+      resolvedRows.forEach((row) => {
+        [
+          row.employee.name,
+          row.row.employee,
+          row.employee.employee_id,
+        ].forEach((value) => {
+          const normalizedName = normalizeCell(value).toLowerCase().replace(/\s+/g, " ").trim();
+          if (normalizedName) employeeNameToId.set(normalizedName, row.employee.employee_id);
         });
-      } else if (existing) {
-        duplicateCount++;
-      } else {
-        tasks.push({
-          kind: "create",
-          key,
-          row,
+      });
+
+      if (employeeIds.length > 0 && dates.length > 0) {
+        const { data, error } = await supabase
+          .from("attendance_logs")
+          .select("log_id, employee_id, employee_name, attendance_date, time_in, time_out, total_hours, late_minutes, undertime_minutes, overtime_minutes, is_late, is_absent, is_undertime, is_overtime, is_incomplete, remarks, validation_status, created_at")
+          .in("attendance_date", dates);
+
+        if (error) throw error;
+
+        (data ?? []).forEach((record: any, index: number) => {
+          const recordEmployeeId = normalizeCell(record.employee_id);
+          const recordEmployeeName = normalizeCell(record.employee_name)
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim();
+          const matchedEmployeeId = recordEmployeeId || employeeNameToId.get(recordEmployeeName);
+          if (!matchedEmployeeId || !employeeIdSet.has(matchedEmployeeId)) return;
+
+          const mapped = mapAttendanceLogToRow(record, index);
+          existingByKey.set(
+            attendanceKeyFromParts(matchedEmployeeId, record.attendance_date),
+            { ...mapped, employeeId: matchedEmployeeId },
+          );
         });
       }
+
+      for (const resolved of resolvedRows) {
+        const existing = existingByKey.get(resolved.key);
+
+        if (existing && isRawAttendanceImport) {
+          duplicateCount++;
+        } else if (existing && (isAbnormalImport || isVerificationImport)) {
+          tasks.push({
+            kind: "update",
+            key: resolved.key,
+            existingId: existing.id,
+            employee: resolved.employee,
+            row: {
+              ...existing,
+              ...resolved.row,
+              ...(isAbnormalImport ? { correctedBy: user?.name ?? "HR Admin" } : {}),
+            },
+          });
+        } else if (existing) {
+          duplicateCount++;
+        } else {
+          tasks.push({
+            kind: "create",
+            key: resolved.key,
+            employee: resolved.employee,
+            row: resolved.row,
+          });
+        }
+      }
+    } catch (err: any) {
+      setImporting(false);
+      setImportProgress({ current: 0, total: 0, failed: 0 });
+      setSnackbar({
+        open: true,
+        message: `Failed to check existing attendance records before import: ${err?.message ?? "Unknown error"}`,
+        severity: "error",
+      });
+      return;
     }
 
     if (tasks.length === 0) {

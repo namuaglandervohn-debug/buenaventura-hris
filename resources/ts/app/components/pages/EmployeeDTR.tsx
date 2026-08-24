@@ -13,6 +13,8 @@ import {
   Button,
   Chip,
   TextField,
+  Autocomplete,
+  Alert,
 } from "@mui/material";
 import {
   AccessTime,
@@ -76,6 +78,35 @@ interface EmployeeProfile {
   outlet?: string | null;
 }
 
+interface EmployeeOption {
+  employeeId: string;
+  name: string;
+  position: string;
+  department: string;
+  outlet: string;
+}
+
+interface EmployeeScheduleRow {
+  id: string;
+  week: string;
+  position: string;
+  outlet: string;
+  timeIn: string;
+  timeOut: string;
+  breakTime: string;
+  status: string;
+  monday: string;
+  tuesday: string;
+  wednesday: string;
+  thursday: string;
+  friday: string;
+  saturday: string;
+  sunday: string;
+}
+
+const SCHEDULE_DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+const SCHEDULE_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 function parseClockToMinutes(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -117,6 +148,25 @@ function formatDbTime(value: unknown) {
   const text = String(value).slice(0, 8);
   const minutes = parseClockToMinutes(text);
   return minutes === null ? String(value) : formatMinutesAsTime(minutes);
+}
+
+function normalizeDisplayText(value?: string | null) {
+  return String(value ?? "").replace(/Caf\?/gi, "Cafe").trim();
+}
+
+function formatEmployeeName(row: any) {
+  return [row?.first_name, row?.middle_name, row?.last_name, row?.suffix]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scheduleMatchesMonth(week: string, selectedMonthLabel: string, selectedYear: number) {
+  const normalizedWeek = week.toLowerCase();
+  const monthMatches = normalizedWeek.includes(selectedMonthLabel.toLowerCase());
+  const yearMatches = normalizedWeek.includes(String(selectedYear));
+  return monthMatches && yearMatches;
 }
 
 function getDayName(year: number, month: number, day: number) {
@@ -222,6 +272,20 @@ const tableSubHeaderCellSx = {
   fontWeight: 700,
 };
 
+const scheduleStatusChipSx = (status: string) => {
+  const normalizedStatus = status.toLowerCase();
+  if (normalizedStatus === "confirmed") {
+    return { bgcolor: "#e5f8e9", color: "#217a43", borderColor: "#a9dfb6", fontWeight: 700 };
+  }
+  if (normalizedStatus === "published") {
+    return { bgcolor: "#e9f6ff", color: "#1d6f9c", borderColor: "#b7dff7", fontWeight: 700 };
+  }
+  if (normalizedStatus === "declined") {
+    return { bgcolor: "#fdeaea", color: "#9c2f2f", borderColor: "#efb8b8", fontWeight: 700 };
+  }
+  return { bgcolor: "#f4f7f3", color: GREEN_UI.muted, borderColor: GREEN_UI.border, fontWeight: 700 };
+};
+
 const printPaperSx = {
   p: { xs: 1.25, sm: 1.5 },
   border: `1px solid ${GREEN_UI.borderStrong}`,
@@ -283,11 +347,19 @@ export default function EmployeeDTR() {
   const { user } = useAuth();
 
   const [records, setRecords] = useState<DTRRecord[]>([]);
+  const [schedules, setSchedules] = useState<EmployeeScheduleRow[]>([]);
   const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
   const currentMonthValue = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonthValue);
   const [loadedLatestMonth, setLoadedLatestMonth] = useState(false);
+  const role = String((user as any)?.role ?? "").toLowerCase();
+  const isHR = role === "hr" || role === "hr_admin" || role.includes("hr") || role.includes("admin");
+  const currentEmployeeId = String((user as any)?.employeeId ?? (user as any)?.employee_id ?? "");
+  const targetEmployeeId = isHR ? selectedEmployeeId : currentEmployeeId;
 
   const [selectedYear, selectedMonthNumber] = selectedMonth.split("-").map(Number);
   const year = selectedYear || new Date().getFullYear();
@@ -304,14 +376,55 @@ export default function EmployeeDTR() {
   );
 
   useEffect(() => {
-    if (!user?.employeeId || loadedLatestMonth) return;
+    if (!isHR) return;
+
+    let cancelled = false;
+
+    supabase
+      .from("employees")
+      .select("employee_id, first_name, middle_name, last_name, suffix, position, department, outlet")
+      .order("first_name", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+
+        if (error) {
+          console.error("Employee lookup fetch error:", error);
+          setEmployeeOptions([]);
+          return;
+        }
+
+        const options = (data ?? [])
+          .map((row: any) => ({
+            employeeId: row.employee_id ?? "",
+            name: formatEmployeeName(row) || row.employee_id || "Unnamed Employee",
+            position: row.position ?? "",
+            department: row.department ?? "",
+            outlet: normalizeDisplayText(row.outlet ?? ""),
+          }))
+          .filter(employee => employee.employeeId);
+
+        setEmployeeOptions(options);
+        setSelectedEmployeeId(prev => prev || options[0]?.employeeId || "");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHR]);
+
+  useEffect(() => {
+    setLoadedLatestMonth(false);
+  }, [targetEmployeeId]);
+
+  useEffect(() => {
+    if (!targetEmployeeId || loadedLatestMonth) return;
 
     let cancelled = false;
 
     supabase
       .from("attendance_logs")
       .select("attendance_date")
-      .eq("employee_id", user.employeeId)
+      .eq("employee_id", targetEmployeeId)
       .order("attendance_date", { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -328,11 +441,12 @@ export default function EmployeeDTR() {
     return () => {
       cancelled = true;
     };
-  }, [loadedLatestMonth, user?.employeeId]);
+  }, [loadedLatestMonth, targetEmployeeId]);
 
   const fetchDTR = useCallback(async () => {
-    if (!user?.employeeId) {
+    if (!targetEmployeeId) {
       setRecords([]);
+      setEmployeeProfile(null);
       setLoading(false);
       return;
     }
@@ -343,14 +457,14 @@ export default function EmployeeDTR() {
       supabase
         .from("employees")
         .select("employee_id, first_name, last_name, position, department, outlet")
-        .eq("employee_id", user.employeeId)
+        .eq("employee_id", targetEmployeeId)
         .maybeSingle(),
       supabase
       .from("attendance_logs")
       .select(
         "log_id, employee_id, attendance_date, time_in, time_out, raw_time_in, raw_time_out, total_hours, late_minutes, undertime_minutes, overtime_minutes, is_late, is_undertime, is_overtime, is_absent, is_incomplete, remarks, validation_status"
       )
-      .eq("employee_id", user.employeeId)
+      .eq("employee_id", targetEmployeeId)
       .gte("attendance_date", periodStart)
       .lte("attendance_date", periodEnd)
         .order("attendance_date", { ascending: true }),
@@ -366,11 +480,60 @@ export default function EmployeeDTR() {
     }
 
     setLoading(false);
-  }, [periodEnd, periodStart, user?.employeeId]);
+  }, [periodEnd, periodStart, targetEmployeeId]);
+
+  const fetchEmployeeSchedules = useCallback(async () => {
+    if (!targetEmployeeId) {
+      setSchedules([]);
+      setScheduleLoading(false);
+      return;
+    }
+
+    setScheduleLoading(true);
+
+    const { data, error } = await supabase
+      .from("schedule")
+      .select("schedule_id, employee_id, position, outlet, week, time_in, time_out, break_time, monday, tuesday, wednesday, thursday, friday, saturday, sunday, status")
+      .eq("employee_id", targetEmployeeId)
+      .order("week", { ascending: true });
+
+    if (error) {
+      console.error("Employee schedule fetch error:", error);
+      setSchedules([]);
+    } else {
+      setSchedules(
+        (data ?? [])
+          .filter((row: any) => scheduleMatchesMonth(String(row.week ?? ""), monthName, year))
+          .map((row: any) => ({
+            id: row.schedule_id ?? "—",
+            week: row.week ?? "",
+            position: row.position ?? employeeProfile?.position ?? "",
+            outlet: normalizeDisplayText(row.outlet ?? employeeProfile?.outlet ?? ""),
+            timeIn: row.time_in ?? "",
+            timeOut: row.time_out ?? "",
+            breakTime: row.break_time ?? "",
+            status: row.status ?? "Draft",
+            monday: row.monday ?? "",
+            tuesday: row.tuesday ?? "",
+            wednesday: row.wednesday ?? "",
+            thursday: row.thursday ?? "",
+            friday: row.friday ?? "",
+            saturday: row.saturday ?? "",
+            sunday: row.sunday ?? "",
+          }))
+      );
+    }
+
+    setScheduleLoading(false);
+  }, [employeeProfile?.outlet, employeeProfile?.position, monthName, targetEmployeeId, year]);
 
   useEffect(() => {
     fetchDTR();
   }, [fetchDTR]);
+
+  useEffect(() => {
+    fetchEmployeeSchedules();
+  }, [fetchEmployeeSchedules]);
 
   const recordMap = useMemo(() => {
     const map = new Map<number, DTRRecord>();
@@ -400,16 +563,17 @@ export default function EmployeeDTR() {
       })
     : "No record yet";
 
+  const selectedEmployeeOption = employeeOptions.find(employee => employee.employeeId === targetEmployeeId);
   const displayName =
     employeeProfile?.first_name || employeeProfile?.last_name
       ? `${employeeProfile.first_name ?? ""} ${employeeProfile.last_name ?? ""}`.trim()
-      : user?.name ?? "";
+      : selectedEmployeeOption?.name ?? user?.name ?? "";
 
   const summaryCards = [
     {
       label: "Employee ID",
-      value: user?.employeeId ?? "—",
-      caption: "Linked employee account",
+      value: targetEmployeeId || "—",
+      caption: isHR ? "Selected employee record" : "Linked employee account",
       icon: <BadgeOutlined fontSize="small" />,
     },
     {
@@ -510,14 +674,44 @@ export default function EmployeeDTR() {
                   mb: 0.75,
                 }}
               >
-                My Daily Time Record
+                {isHR ? "Employee Daily Time Records" : "My Daily Time Record"}
               </Typography>
               <Typography variant="body2" sx={{ color: GREEN_UI.muted, maxWidth: 650, lineHeight: 1.7 }}>
-                View your monthly Daily Time Record for {monthName} {year}, review attendance entries, and print a clean copy for submission.
+                {isHR
+                  ? `Search an employee and view previous Daily Time Records for ${monthName} ${year}.`
+                  : `View your monthly Daily Time Record for ${monthName} ${year}, review attendance entries, and print a clean copy for submission.`}
               </Typography>
             </Box>
 
             <Box sx={{ display: "flex", gap: 1.25, flexWrap: "wrap", alignItems: "center" }}>
+              {isHR && (
+                <Autocomplete
+                  size="small"
+                  options={employeeOptions}
+                  value={selectedEmployeeOption ?? null}
+                  onChange={(_, option) => setSelectedEmployeeId(option?.employeeId ?? "")}
+                  getOptionLabel={(option) => `${option.name} (${option.employeeId})`}
+                  isOptionEqualToValue={(option, value) => option.employeeId === value.employeeId}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Search Employee"
+                      placeholder="Name or Employee ID"
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  )}
+                  sx={{
+                    minWidth: { xs: "100%", sm: 320 },
+                    "& .MuiOutlinedInput-root": {
+                      borderRadius: "12px",
+                      bgcolor: "#fff",
+                      "& fieldset": { borderColor: GREEN_UI.border },
+                      "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
+                      "&.Mui-focused fieldset": { borderColor: GREEN_UI.green },
+                    },
+                  }}
+                />
+              )}
               <TextField
                 type="month"
                 label="Month Covered"
@@ -618,6 +812,12 @@ export default function EmployeeDTR() {
           ))}
         </Box>
       </Box>
+
+      {isHR && !targetEmployeeId && (
+        <Alert className="no-print" severity="info" sx={{ mb: 2, borderRadius: "18px", border: `1px solid ${GREEN_UI.border}` }}>
+          Select an employee to view their previous Daily Time Records.
+        </Alert>
+      )}
 
       <Paper
         elevation={0}
@@ -734,7 +934,7 @@ export default function EmployeeDTR() {
                   }}
                 >
                   {[
-                    ["Employee No.", user?.employeeId ?? ""],
+                    ["Employee No.", targetEmployeeId],
                     ["Name", displayName],
                     ["Position", employeeProfile?.position ?? ""],
                     ["Month", `${monthName} ${year}`],
@@ -914,6 +1114,156 @@ export default function EmployeeDTR() {
             </>
           )}
         </Paper>
+      </Paper>
+
+      <Paper
+        className="no-print"
+        elevation={0}
+        sx={{
+          ...softCardSx,
+          mt: 2,
+          p: { xs: 1.5, sm: 2 },
+          overflow: "hidden",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.2, mb: 1.5 }}>
+          <Box
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: "16px",
+              display: "grid",
+              placeItems: "center",
+              bgcolor: GREEN_UI.greenSoft,
+              color: GREEN_UI.greenDark,
+              flexShrink: 0,
+            }}
+          >
+            <CalendarMonth fontSize="small" />
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography fontWeight={800} sx={{ color: GREEN_UI.text }}>
+              My Schedule
+            </Typography>
+            <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+              Assigned schedule for {monthName} {year}, shown for this employee only.
+            </Typography>
+          </Box>
+        </Box>
+
+        {scheduleLoading ? (
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1.25, py: 4 }}>
+            <CircularProgress size={24} sx={{ color: GREEN_UI.green }} />
+            <Typography sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>Loading schedule...</Typography>
+          </Box>
+        ) : schedules.length === 0 ? (
+          <Box
+            sx={{
+              py: 4,
+              px: 2,
+              textAlign: "center",
+              border: `1px dashed ${GREEN_UI.borderStrong}`,
+              borderRadius: "18px",
+              bgcolor: "rgba(245, 252, 241, 0.72)",
+            }}
+          >
+            <Typography fontWeight={800} sx={{ color: GREEN_UI.text }}>
+              No assigned schedule found
+            </Typography>
+            <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 0.5 }}>
+              Published or imported schedules for {monthName} {year} will appear here.
+            </Typography>
+          </Box>
+        ) : (
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              borderRadius: "18px",
+              border: `1px solid ${GREEN_UI.border}`,
+              bgcolor: "rgba(255,255,255,0.86)",
+              overflowX: "auto",
+            }}
+          >
+            <Table size="small" sx={{ minWidth: 1120 }}>
+              <TableHead>
+                <TableRow
+                  sx={{
+                    "& th": {
+                      bgcolor: GREEN_UI.greenSoft,
+                      color: GREEN_UI.greenDark,
+                      fontWeight: 800,
+                      borderBottom: `1px solid ${GREEN_UI.border}`,
+                      whiteSpace: "nowrap",
+                    },
+                  }}
+                >
+                  <TableCell>Week</TableCell>
+                  <TableCell>Position</TableCell>
+                  <TableCell>Outlet</TableCell>
+                  <TableCell>Break</TableCell>
+                  {SCHEDULE_DAY_LABELS.map(day => (
+                    <TableCell key={day} align="center">{day}</TableCell>
+                  ))}
+                  <TableCell align="center">Status</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {schedules.map(schedule => (
+                  <TableRow
+                    key={schedule.id}
+                    hover
+                    sx={{
+                      "& td": {
+                        color: GREEN_UI.text,
+                        borderBottom: `1px solid ${GREEN_UI.border}`,
+                      },
+                    }}
+                  >
+                    <TableCell sx={{ whiteSpace: "nowrap", fontWeight: 800 }}>{schedule.week || "—"}</TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>{schedule.position || employeeProfile?.position || "—"}</TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>{schedule.outlet || employeeProfile?.outlet || "—"}</TableCell>
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>{schedule.breakTime || "—"}</TableCell>
+                    {SCHEDULE_DAY_KEYS.map((dayKey, index) => (
+                      <TableCell key={dayKey} align="center" sx={{ minWidth: 120 }}>
+                        <Chip
+                          label={schedule[dayKey] || "—"}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            maxWidth: 160,
+                            height: "auto",
+                            minHeight: 26,
+                            bgcolor: schedule[dayKey] ? "#f8fcf5" : "#f4f7f3",
+                            color: schedule[dayKey]?.toLowerCase() === "rd" ? "#9b6b00" : GREEN_UI.greenDark,
+                            borderColor: schedule[dayKey] ? GREEN_UI.borderStrong : GREEN_UI.border,
+                            fontWeight: 700,
+                            "& .MuiChip-label": {
+                              display: "block",
+                              whiteSpace: "normal",
+                              lineHeight: 1.2,
+                              px: 1,
+                              py: 0.45,
+                            },
+                          }}
+                          title={`${SCHEDULE_DAY_LABELS[index]}: ${schedule[dayKey] || "No schedule"}`}
+                        />
+                      </TableCell>
+                    ))}
+                    <TableCell align="center">
+                      <Chip
+                        label={schedule.status || "Draft"}
+                        size="small"
+                        variant="outlined"
+                        sx={scheduleStatusChipSx(schedule.status)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
       </Paper>
 
       <style>{printStyles}</style>
