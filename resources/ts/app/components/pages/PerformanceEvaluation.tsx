@@ -1749,6 +1749,22 @@ export default function PerformanceEvaluation() {
             <Chip label="Criteria Scores" size="small" variant="outlined" sx={{ fontWeight: 700, color: GREEN_UI.greenDark, borderColor: GREEN_UI.borderStrong, bgcolor: "#ffffff" }} />
           </Divider>
 
+          <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<TaskAlt />}
+              onClick={() => {
+                const selectedScores = Object.fromEntries(criteria.map((c) => [c.criteria_id, Number(c.max_score || 100)]));
+                setForm({ ...form, scores: { ...form.scores, ...selectedScores } });
+              }}
+              disabled={criteria.length === 0}
+              sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark, bgcolor: "#ffffff", "&:hover": { bgcolor: GREEN_UI.greenSoft } }}
+            >
+              Select All
+            </Button>
+          </Box>
+
           <Grid container spacing={1.5}>
             {criteria.map((c) => (
               <Grid key={c.criteria_id} size={{ xs: 12, md: 6 }}>

@@ -231,6 +231,11 @@ const InfoItem = ({ label, value }: { label: string; value?: any }) => (
   </Grid>
 );
 
+const getMissingColumnFromSupabaseError = (error: any) => {
+  const message = String(error?.message ?? '');
+  return message.match(/Could not find the '([^']+)' column/)?.[1] ?? '';
+};
+
 
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
@@ -470,46 +475,57 @@ export default function EmployeeProfile() {
       updatedDocs = [...updatedDocs, ...encoded];
     }
 
-    const { data, error } = await supabase
-      .from("employees")
-      .update({
-        first_name: editForm.first_name ?? "",
-        middle_name: editForm.middle_name ?? "",
-        last_name: editForm.last_name ?? "",
-        suffix: editForm.suffix ?? "",
-        email: editForm.email,
-        phone_number: editForm.contact,
-        address: editForm.address,
-        department: editForm.department,
-        position: editForm.position,
-        outlet: editForm.outlet ?? "",
-        status: editForm.status,
-        supervisor: editForm.supervisor,
-        hire_date: editForm.dateHired,
-        emergency_contact: editForm.emergencyContact,
-        gender: editForm.gender,
-        civil_status: editForm.civilStatus,
-        birthdate: editForm.birthdate,
-        birthplace: editForm.birthplace,
-        employment_type: editForm.employmentType,
-        salary: editForm.salary === "" ? null : editForm.salary,
-        daily_schedule: editForm.dailySchedule,
-        break_time: editForm.breakTime,
-        time_in: editForm.timeIn,
-        time_out: editForm.timeOut,
-        education: editForm.education,
-        experience: editForm.experience,
-        tin: editForm.tin,
-        sss: editForm.sss,
-        philhealth: editForm.philhealth,
-        pagibig: editForm.pagibig,
-        documents: updatedDocs,
-      })
-      .eq("employee_id", id)
-      .select()
-      .single();
+    const employeeUpdate: Record<string, any> = {
+      first_name: editForm.first_name ?? "",
+      middle_name: editForm.middle_name ?? "",
+      last_name: editForm.last_name ?? "",
+      suffix: editForm.suffix ?? "",
+      email: editForm.email,
+      phone_number: editForm.contact,
+      address: editForm.address,
+      department: editForm.department,
+      position: editForm.position,
+      outlet: editForm.outlet ?? "",
+      status: editForm.status,
+      supervisor: editForm.supervisor,
+      hire_date: editForm.dateHired,
+      emergency_contact: editForm.emergencyContact,
+      gender: editForm.gender,
+      civil_status: editForm.civilStatus,
+      birthdate: editForm.birthdate,
+      birthplace: editForm.birthplace,
+      employment_type: editForm.employmentType,
+      salary: editForm.salary === "" ? null : editForm.salary,
+      education: editForm.education,
+      experience: editForm.experience,
+      tin: editForm.tin,
+      sss: editForm.sss,
+      philhealth: editForm.philhealth,
+      pagibig: editForm.pagibig,
+      documents: updatedDocs,
+    };
 
-    if (error) throw error;
+    let data: any = null;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const result = await supabase
+        .from("employees")
+        .update(employeeUpdate)
+        .eq("employee_id", id)
+        .select()
+        .single();
+
+      if (!result.error) {
+        data = result.data;
+        break;
+      }
+
+      const missingColumn = getMissingColumnFromSupabaseError(result.error);
+      if (!missingColumn || !(missingColumn in employeeUpdate)) throw result.error;
+
+      delete employeeUpdate[missingColumn];
+    }
+
+    if (!data) throw new Error("Employee profile could not be saved with the available employee columns.");
 
     const appForm = editForm.applicationForm;
     if (appForm?.applicantId) {
@@ -594,7 +610,7 @@ export default function EmployeeProfile() {
   employmentType: data.employment_type ?? "",
   salary: data.salary ?? "",
   dailySchedule: data.daily_schedule ?? "",
-  breakTime: data.break_time ?? "",
+  breakTime: editForm.breakTime ?? "",
   timeIn: data.time_in ?? "",
   timeOut: data.time_out ?? "",
   education: data.education ?? "",

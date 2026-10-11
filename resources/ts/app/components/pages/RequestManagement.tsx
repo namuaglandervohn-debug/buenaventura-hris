@@ -88,6 +88,7 @@ interface EmployeeLeaveDirectoryRow {
   name: string;
   position: string;
   department: string;
+  dailyRate: number;
 }
 
 type LeaveEntitlementMap = Record<string, Record<string, number>>;
@@ -162,14 +163,12 @@ const LEAVE_TYPES = [
   'Other',
 ];
 
+const COMPANY_PAID_LEAVE_TYPE = 'Company Paid Leave';
+const COMPANY_ANNUAL_LEAVE_ALLOWANCE = 5;
+const CURRENT_LEAVE_YEAR = new Date().getFullYear();
+
 const DEFAULT_LEAVE_ENTITLEMENTS: Record<string, number> = {
-  'Vacation Leave': 5,
-  'Sick Leave': 5,
-  'Emergency Leave': 3,
-  'Maternity Leave': 105,
-  'Paternity Leave': 7,
-  'Bereavement Leave': 3,
-  Other: 0,
+  [COMPANY_PAID_LEAVE_TYPE]: COMPANY_ANNUAL_LEAVE_ALLOWANCE,
 };
 
 const GREEN_UI = {
@@ -245,6 +244,21 @@ const requestTypeChipSx = (type: RequestType) => {
     fontWeight: 600,
     '& .MuiChip-label': { px: 1.25 },
   };
+};
+
+const parseDailyRate = (value: unknown) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const match = String(value ?? '').replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) || 0 : 0;
+};
+
+const formatMoney = (value: number) =>
+  `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const getLeaveRequestYear = (request: Pick<RequestRecord, 'startDate' | 'submittedDate'>) => {
+  const dateText = request.startDate || request.submittedDate;
+  const date = new Date(dateText);
+  return Number.isNaN(date.getTime()) ? CURRENT_LEAVE_YEAR : date.getFullYear();
 };
 
 const softTextFieldSx = {
@@ -521,7 +535,7 @@ export default function RequestManagement() {
   const fetchEmployeeLeaveDirectory = async () => {
     const { data, error: employeeError } = await supabase
       .from('employees')
-      .select('employee_id, first_name, middle_name, last_name, suffix, position, department')
+      .select('employee_id, first_name, middle_name, last_name, suffix, position, department, salary')
       .order('first_name', { ascending: true });
 
     if (employeeError) throw employeeError;
@@ -532,6 +546,7 @@ export default function RequestManagement() {
         name: formatEmployeeName(row) || row.employee_id || 'Unnamed Employee',
         position: row.position ?? '',
         department: row.department ?? '',
+        dailyRate: parseDailyRate(row.salary),
       }))
     );
   };
@@ -561,7 +576,9 @@ export default function RequestManagement() {
         if (!employeeId || !leaveType) return;
 
         if (!nextMap[employeeId]) nextMap[employeeId] = {};
-        nextMap[employeeId][leaveType] = Number(row.available ?? DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0);
+        const normalizedLeaveType = LEAVE_TYPES.includes(leaveType) ? COMPANY_PAID_LEAVE_TYPE : leaveType;
+        const available = Number(row.available ?? DEFAULT_LEAVE_ENTITLEMENTS[normalizedLeaveType] ?? COMPANY_ANNUAL_LEAVE_ALLOWANCE);
+        nextMap[employeeId][normalizedLeaveType] = Math.max(nextMap[employeeId][normalizedLeaveType] ?? 0, available);
       });
 
       setLeaveEntitlementsByEmployee(nextMap);
@@ -863,9 +880,21 @@ export default function RequestManagement() {
 
   const displayData = tabData[tab]?.data ?? searchedRequests;
 
-  const getAvailableLeaveCredits = (employeeId: string | null | undefined, leaveType: string) => {
-    if (!employeeId) return DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0;
-    return leaveEntitlementsByEmployee[employeeId]?.[leaveType] ?? DEFAULT_LEAVE_ENTITLEMENTS[leaveType] ?? 0;
+  const getAnnualLeaveAllowance = (employeeId: string | null | undefined) => {
+    if (!employeeId) return COMPANY_ANNUAL_LEAVE_ALLOWANCE;
+    return leaveEntitlementsByEmployee[employeeId]?.[COMPANY_PAID_LEAVE_TYPE] ?? COMPANY_ANNUAL_LEAVE_ALLOWANCE;
+  };
+
+  const getApprovedLeaveDays = (employeeId: string | null | undefined, year = CURRENT_LEAVE_YEAR) => {
+    if (!employeeId) return 0;
+    return requests
+      .filter(request =>
+        request.type === 'Leave' &&
+        request.status === 'Approved' &&
+        request.employeeId === employeeId &&
+        getLeaveRequestYear(request) === year
+      )
+      .reduce((sum, request) => sum + Number(request.totalDays ?? 0), 0);
   };
 
   const requestStats = [
@@ -895,49 +924,29 @@ export default function RequestManagement() {
     },
   ];
 
-  const leaveBalances = Object.keys(DEFAULT_LEAVE_ENTITLEMENTS).map(leaveType => {
-    const available = getAvailableLeaveCredits(currentEmployeeId, leaveType);
-    const approvedDays = requests
-      .filter(request =>
-        request.type === 'Leave' &&
-        request.status === 'Approved' &&
-        request.leaveType === leaveType &&
-        (!isEmployee || request.employeeId === currentEmployeeId)
-      )
-      .reduce((sum, request) => sum + Number(request.totalDays ?? 0), 0);
-
-    return {
-      leaveType,
-      available,
-      used: approvedDays,
-      remaining: Math.max(available - approvedDays, 0),
-    };
-  });
+  const currentEmployeeAnnualAllowance = getAnnualLeaveAllowance(currentEmployeeId);
+  const currentEmployeeUsedLeave = getApprovedLeaveDays(currentEmployeeId);
+  const currentEmployeeRecord = employeeLeaveDirectory.find(employee => employee.employeeId === currentEmployeeId);
+  const currentEmployeeDailyRate = currentEmployeeRecord?.dailyRate ?? parseDailyRate((user as any)?.salary);
+  const leaveBalances = [{
+    leaveType: COMPANY_PAID_LEAVE_TYPE,
+    available: currentEmployeeAnnualAllowance,
+    used: currentEmployeeUsedLeave,
+    remaining: Math.max(currentEmployeeAnnualAllowance - currentEmployeeUsedLeave, 0),
+    estimatedConversion: Math.max(currentEmployeeAnnualAllowance - currentEmployeeUsedLeave, 0) * currentEmployeeDailyRate,
+  }];
 
   const employeeLeaveBalanceRows = employeeLeaveDirectory.map(employee => {
-    const balances = Object.keys(DEFAULT_LEAVE_ENTITLEMENTS).map(leaveType => {
-      const available = getAvailableLeaveCredits(employee.employeeId, leaveType);
-      const approvedDays = requests
-        .filter(request =>
-          request.type === 'Leave' &&
-          request.status === 'Approved' &&
-          request.leaveType === leaveType &&
-          request.employeeId === employee.employeeId
-        )
-        .reduce((sum, request) => sum + Number(request.totalDays ?? 0), 0);
-
-      return {
-        leaveType,
-        available,
-        used: approvedDays,
-        remaining: Math.max(available - approvedDays, 0),
-      };
-    });
+    const annualAllowance = getAnnualLeaveAllowance(employee.employeeId);
+    const usedLeave = getApprovedLeaveDays(employee.employeeId);
+    const remaining = Math.max(annualAllowance - usedLeave, 0);
 
     return {
       ...employee,
-      balances,
-      totalRemaining: balances.reduce((sum, balance) => sum + balance.remaining, 0),
+      annualAllowance,
+      usedLeave,
+      remaining,
+      estimatedConversion: remaining * employee.dailyRate,
     };
   });
   const normalizedLeaveBalanceSearch = leaveBalanceSearch.trim().toLowerCase();
@@ -964,12 +973,9 @@ export default function RequestManagement() {
   const openBalanceEditDialog = (employee: EmployeeLeaveDirectoryRow) => {
     setSelectedBalanceEmployee(employee);
     setBalanceCreditForm(
-      Object.fromEntries(
-        LEAVE_TYPES.map(leaveType => [
-          leaveType,
-          String(getAvailableLeaveCredits(employee.employeeId, leaveType)),
-        ])
-      )
+      {
+        [COMPANY_PAID_LEAVE_TYPE]: String(getAnnualLeaveAllowance(employee.employeeId)),
+      }
     );
     setBalanceEditDialog(true);
   };
@@ -984,14 +990,11 @@ export default function RequestManagement() {
   const saveEditedLeaveBalances = async () => {
     if (!selectedBalanceEmployee) return;
 
-    const rows = LEAVE_TYPES.map(leaveType => {
-      const parsedValue = Number(balanceCreditForm[leaveType]);
-      return {
-        employee_id: selectedBalanceEmployee.employeeId,
-        leave_type: leaveType,
-        available: parsedValue,
-      };
-    });
+    const rows = [{
+      employee_id: selectedBalanceEmployee.employeeId,
+      leave_type: COMPANY_PAID_LEAVE_TYPE,
+      available: Number(balanceCreditForm[COMPANY_PAID_LEAVE_TYPE]),
+    }];
 
     const hasInvalidValue = rows.some(row => !Number.isFinite(row.available) || row.available < 0);
     if (hasInvalidValue) {
@@ -1009,7 +1012,7 @@ export default function RequestManagement() {
 
       setLeaveEntitlementsByEmployee(prev => ({
         ...prev,
-        [selectedBalanceEmployee.employeeId]: Object.fromEntries(rows.map(row => [row.leave_type, row.available])),
+        [selectedBalanceEmployee.employeeId]: { [COMPANY_PAID_LEAVE_TYPE]: rows[0].available },
       }));
       setBalanceEditDialog(false);
       setSelectedBalanceEmployee(null);
@@ -1035,8 +1038,13 @@ export default function RequestManagement() {
   const myLeaveCreditView = (
     <>
       <Grid container spacing={1.5}>
-        {leaveBalances.map(balance => (
-          <Grid key={balance.leaveType} size={{ xs: 12, sm: 6 }}>
+        {[
+          ['Annual Allowance', formatCreditValue(leaveBalances[0].available)],
+          ['Used Leave', formatCreditValue(leaveBalances[0].used)],
+          ['Remaining Balance', formatCreditValue(leaveBalances[0].remaining)],
+          ['Estimated Conversion', formatMoney(leaveBalances[0].estimatedConversion)],
+        ].map(([label, value]) => (
+          <Grid key={label} size={{ xs: 12, sm: 6 }}>
             <Paper
               elevation={0}
               sx={{
@@ -1057,20 +1065,12 @@ export default function RequestManagement() {
                     letterSpacing: 0,
                   }}
                 >
-                  {formatCreditValue(balance.remaining)}
+                  {value}
                 </Typography>
               </Box>
               <Box sx={{ bgcolor: GREEN_UI.greenDark, color: '#ffffff', py: 0.75, px: 1.5, textAlign: 'center' }}>
                 <Typography fontWeight={700} variant="body2" sx={{ fontFamily: 'inherit' }}>
-                  {balance.leaveType}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1, px: 1.5, py: 1 }}>
-                <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
-                  Available: {formatCreditValue(balance.available)}
-                </Typography>
-                <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700, textAlign: 'right' }}>
-                  Used: {formatCreditValue(balance.used)}
+                  {label}
                 </Typography>
               </Box>
             </Paper>
@@ -1078,7 +1078,7 @@ export default function RequestManagement() {
         ))}
       </Grid>
       <Alert severity="info" sx={{ mt: 1.5, borderRadius: '10px', border: `1px solid ${GREEN_UI.border}` }}>
-        Unused leave credits remain available until the end of the current leave cycle. Only final HR-approved leave requests reduce balances.
+        The five days are one shared annual company-paid leave allowance. Final HR-approved leave requests reduce this balance, and unused days are converted to cash at year end.
       </Alert>
     </>
   );
@@ -1258,35 +1258,27 @@ export default function RequestManagement() {
           </Typography>
           <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
             {isEmployee
-              ? 'Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.'
-              : 'List of existing employees and their remaining leave credits. Only final HR-approved leave requests reduce balances.'}
+              ? 'One annual company-paid leave allowance of 5 days. Final HR-approved leave requests reduce the shared balance.'
+              : 'Annual allowance, used leave, remaining balance, and estimated year-end cash conversion. Only final HR-approved leave requests reduce balances.'}
           </Typography>
         </Box>
       </Box>
       {isEmployee ? (
         <Grid container spacing={1.2}>
-          {leaveBalances.map(balance => (
-            <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
+          {[
+            ['Annual Allowance', leaveBalances[0].available],
+            ['Used Leave', leaveBalances[0].used],
+            ['Remaining Balance', leaveBalances[0].remaining],
+            ['Estimated Conversion', formatMoney(leaveBalances[0].estimatedConversion)],
+          ].map(([label, value]) => (
+            <Grid key={label} size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
                 <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
-                  {balance.leaveType}
+                  {label}
                 </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
-                  {[
-                    ['Available', balance.available],
-                    ['Used', balance.used],
-                    ['Remaining', balance.remaining],
-                  ].map(([label, value]) => (
-                    <Box key={label} sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
-                        {label}
-                      </Typography>
-                      <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
-                        {value}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
+                <Typography variant="h5" fontWeight={900} sx={{ color: label === 'Remaining Balance' ? GREEN_UI.greenDark : GREEN_UI.text }}>
+                  {value}
+                </Typography>
               </Paper>
             </Grid>
           ))}
@@ -1334,25 +1326,24 @@ export default function RequestManagement() {
                 <TableCell>Employee</TableCell>
                 <TableCell>Position</TableCell>
                 <TableCell>Department</TableCell>
-                {LEAVE_TYPES.map(type => (
-                  <TableCell key={type} align="center">
-                    {type.replace(' Leave', '')}
-                  </TableCell>
-                ))}
-                <TableCell align="center">Total Remaining</TableCell>
+                <TableCell align="center">Annual Allowance</TableCell>
+                <TableCell align="center">Used Leave</TableCell>
+                <TableCell align="center">Remaining Balance</TableCell>
+                <TableCell align="center">Daily Rate</TableCell>
+                <TableCell align="center">Estimated Conversion</TableCell>
                 <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {employeeLeaveBalanceRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={LEAVE_TYPES.length + 5} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
                     No employee records found.
                   </TableCell>
                 </TableRow>
               ) : filteredEmployeeLeaveBalanceRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={LEAVE_TYPES.length + 5} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
                     No employees match your search.
                   </TableCell>
                 </TableRow>
@@ -1380,26 +1371,17 @@ export default function RequestManagement() {
                     </TableCell>
                     <TableCell>{employee.position || '—'}</TableCell>
                     <TableCell>{employee.department || '—'}</TableCell>
-                    {employee.balances.map(balance => (
-                      <TableCell key={balance.leaveType} align="center">
-                        <Chip
-                          label={balance.remaining}
-                          size="small"
-                          sx={{
-                            minWidth: 46,
-                            bgcolor: balance.remaining > 0 ? GREEN_UI.greenSoft : '#f4f7f3',
-                            color: balance.remaining > 0 ? GREEN_UI.greenDark : GREEN_UI.muted,
-                            border: `1px solid ${balance.remaining > 0 ? GREEN_UI.borderStrong : GREEN_UI.border}`,
-                            fontWeight: 800,
-                          }}
-                        />
-                      </TableCell>
-                    ))}
                     <TableCell align="center">
-                      <Typography fontWeight={900} sx={{ color: GREEN_UI.greenDark }}>
-                        {employee.totalRemaining}
+                      <Chip label={formatCreditValue(employee.annualAllowance)} size="small" sx={{ minWidth: 46, bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark, border: `1px solid ${GREEN_UI.borderStrong}`, fontWeight: 800 }} />
+                    </TableCell>
+                    <TableCell align="center">{formatCreditValue(employee.usedLeave)}</TableCell>
+                    <TableCell align="center">
+                      <Typography fontWeight={900} sx={{ color: employee.remaining > 0 ? GREEN_UI.greenDark : GREEN_UI.muted }}>
+                        {formatCreditValue(employee.remaining)}
                       </Typography>
                     </TableCell>
+                    <TableCell align="center">{formatMoney(employee.dailyRate)}</TableCell>
+                    <TableCell align="center">{formatMoney(employee.estimatedConversion)}</TableCell>
                     <TableCell align="center">
                       <Button
                         size="small"
@@ -1427,7 +1409,7 @@ export default function RequestManagement() {
         </>
       )}
       <Alert severity="info" sx={{ mt: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
-        Unused leave credits remain available until the end of the current leave cycle. Carry-over or cash conversion is processed only when HR/Admin records an approved organization adjustment; otherwise unused credits are reset for the next cycle.
+        The 5 days are one shared annual company-paid allowance across all leave categories. Unused company leave is converted to cash at year end using Remaining Days x Daily Basic Salary Rate, then the allowance resets to 5 days for the new year. Legally required leave entitlements should be tracked separately.
       </Alert>
     </Paper>
   );
@@ -1607,160 +1589,6 @@ export default function RequestManagement() {
           </Grid>
         ))}
       </Grid>
-
-      {false && (
-      <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5, flexWrap: 'wrap' }}>
-          <Box
-            sx={{
-              width: 40,
-              height: 40,
-              borderRadius: '16px',
-              display: 'grid',
-              placeItems: 'center',
-              bgcolor: GREEN_UI.greenSoft,
-              color: GREEN_UI.greenDark,
-            }}
-          >
-            <CalendarMonth />
-          </Box>
-          <Box>
-            <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-              {isEmployee ? 'Leave Balance' : 'Employee Leave Balances'}
-            </Typography>
-            <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-              {isEmployee
-                ? 'Available, used, and remaining leave credits. Submitted and supervisor-approved requests do not reduce balances until final approval.'
-                : 'List of existing employees and their remaining leave credits. Only final HR-approved leave requests reduce balances.'}
-            </Typography>
-          </Box>
-        </Box>
-        {isEmployee ? (
-          <Grid container spacing={1.2}>
-            {leaveBalances.map(balance => (
-              <Grid key={balance.leaveType} size={{ xs: 12, sm: 6, md: 3 }}>
-                <Paper elevation={0} sx={{ ...innerCardSx, p: 1.5, minHeight: 112 }}>
-                  <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75 }}>
-                    {balance.leaveType}
-                  </Typography>
-                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
-                    {[
-                      ['Available', balance.available],
-                      ['Used', balance.used],
-                      ['Remaining', balance.remaining],
-                    ].map(([label, value]) => (
-                      <Box key={label} sx={{ minWidth: 0 }}>
-                        <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
-                          {label}
-                        </Typography>
-                        <Typography fontWeight={700} sx={{ color: label === 'Remaining' ? GREEN_UI.greenDark : GREEN_UI.text }}>
-                          {value}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Box>
-                </Paper>
-              </Grid>
-            ))}
-          </Grid>
-        ) : (
-          <TableContainer
-            component={Paper}
-            elevation={0}
-            sx={{
-              borderRadius: '18px',
-              border: `1px solid ${GREEN_UI.border}`,
-              bgcolor: 'rgba(255,255,255,0.82)',
-              overflowX: 'auto',
-            }}
-          >
-            <Table size="small" sx={{ minWidth: 1120 }}>
-              <TableHead>
-                <TableRow
-                  sx={{
-                    '& th': {
-                      bgcolor: GREEN_UI.greenSoft,
-                      color: GREEN_UI.greenDark,
-                      fontWeight: 800,
-                      borderBottom: `1px solid ${GREEN_UI.border}`,
-                      whiteSpace: 'nowrap',
-                    },
-                  }}
-                >
-                  <TableCell>Employee</TableCell>
-                  <TableCell>Position</TableCell>
-                  <TableCell>Department</TableCell>
-                  {LEAVE_TYPES.map(type => (
-                    <TableCell key={type} align="center">
-                      {type.replace(' Leave', '')}
-                    </TableCell>
-                  ))}
-                  <TableCell align="center">Total Remaining</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {employeeLeaveBalanceRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={LEAVE_TYPES.length + 4} align="center" sx={{ py: 4, color: GREEN_UI.muted }}>
-                      No employee records found.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  employeeLeaveBalanceRows.map(employee => (
-                    <TableRow
-                      key={employee.employeeId}
-                      hover
-                      sx={{
-                        '& td': {
-                          borderBottom: `1px solid ${GREEN_UI.border}`,
-                          color: GREEN_UI.text,
-                        },
-                      }}
-                    >
-                      <TableCell>
-                        <Box>
-                          <Typography fontWeight={800} sx={{ color: GREEN_UI.text }}>
-                            {employee.name}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: GREEN_UI.muted, fontWeight: 700 }}>
-                            {employee.employeeId}
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                      <TableCell>{employee.position || '—'}</TableCell>
-                      <TableCell>{employee.department || '—'}</TableCell>
-                      {employee.balances.map(balance => (
-                        <TableCell key={balance.leaveType} align="center">
-                          <Chip
-                            label={balance.remaining}
-                            size="small"
-                            sx={{
-                              minWidth: 46,
-                              bgcolor: balance.remaining > 0 ? GREEN_UI.greenSoft : '#f4f7f3',
-                              color: balance.remaining > 0 ? GREEN_UI.greenDark : GREEN_UI.muted,
-                              border: `1px solid ${balance.remaining > 0 ? GREEN_UI.borderStrong : GREEN_UI.border}`,
-                              fontWeight: 800,
-                            }}
-                          />
-                        </TableCell>
-                      ))}
-                      <TableCell align="center">
-                        <Typography fontWeight={900} sx={{ color: GREEN_UI.greenDark }}>
-                          {employee.totalRemaining}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-        <Alert severity="info" sx={{ mt: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
-          Unused leave credits remain available until the end of the current leave cycle. Carry-over or cash conversion is processed only when HR/Admin records an approved organization adjustment; otherwise unused credits are reset for the next cycle.
-        </Alert>
-      </Paper>
-      )}
 
       {error && (
         <Alert
@@ -2541,23 +2369,21 @@ export default function RequestManagement() {
         </DialogTitle>
         <DialogContent sx={{ p: { xs: 2, sm: 3 }, bgcolor: '#fbfff9' }}>
           <Alert severity="info" sx={{ mt: 2, mb: 2, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
-            Enter the employee&apos;s available leave credits. Remaining balances are computed after subtracting final HR-approved leave requests.
+            Enter the employee&apos;s annual company-paid leave allowance. The default is 5 days total across all leave types.
           </Alert>
           <Grid container spacing={2}>
-            {LEAVE_TYPES.map(leaveType => (
-              <Grid key={leaveType} size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  fullWidth
-                  type="number"
-                  label={leaveType}
-                  value={balanceCreditForm[leaveType] ?? ''}
-                  onChange={event => updateBalanceCreditInput(leaveType, event.target.value)}
-                  inputProps={{ min: 0, step: 0.001 }}
-                  InputLabelProps={{ shrink: true }}
-                  sx={softTextFieldSx}
-                />
-              </Grid>
-            ))}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
+                type="number"
+                label="Annual Company Paid Leave Allowance"
+                value={balanceCreditForm[COMPANY_PAID_LEAVE_TYPE] ?? ''}
+                onChange={event => updateBalanceCreditInput(COMPANY_PAID_LEAVE_TYPE, event.target.value)}
+                inputProps={{ min: 0, step: 0.001 }}
+                InputLabelProps={{ shrink: true }}
+                sx={softTextFieldSx}
+              />
+            </Grid>
           </Grid>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5, pt: 1, gap: 1, flexWrap: 'wrap', bgcolor: '#fbfff9' }}>

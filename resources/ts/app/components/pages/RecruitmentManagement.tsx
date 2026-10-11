@@ -25,6 +25,9 @@ import {
   ArchiveOutlined,
   UnarchiveOutlined,
   HowToReg,
+  AutoAwesome,
+  ContentPasteSearch,
+  Sms,
 } from '@mui/icons-material';
 import {
   Alert,
@@ -61,6 +64,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import ActionSnackbar from '../ActionSnackbar';
 import { nextEmployeeId } from '../../lib/employeeIds';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 interface DocFile {
   name: string;
@@ -209,6 +213,22 @@ const pillButtonSx = {
 const tableHeaderIconSx = {
   fontSize: 16,
   color: 'inherit',
+};
+
+const dialogPaperSx = {
+  borderRadius: { xs: '22px', sm: '30px' },
+  overflow: 'hidden',
+  border: `1px solid ${GREEN_UI.border}`,
+  background: '#fbfff9',
+  boxShadow: '0 28px 70px rgba(27, 73, 37, 0.18)',
+};
+
+const dialogTitleSx = {
+  px: { xs: 2, sm: 3 },
+  py: 2.25,
+  background: 'linear-gradient(135deg, #ffffff 0%, #eef9ea 100%)',
+  borderBottom: `1px solid ${GREEN_UI.border}`,
+  color: GREEN_UI.text,
 };
 
 const chipIconSx = {
@@ -652,6 +672,134 @@ const getSubmittedDocumentsForApplication = (app: Application | null): string[] 
   return app.supportingDocuments ?? [];
 };
 
+const SCORE_KEYWORDS = {
+  education: ['college', 'bachelor', 'degree', 'graduate', 'vocational', 'tesda', 'diploma'],
+  experience: ['experience', 'year', 'years', 'worked', 'cashier', 'service', 'hotel', 'resort', 'restaurant', 'office'],
+  documents: ['resume', 'biodata', 'certificate', 'tor', 'nbi', 'clearance', 'medical'],
+  contact: ['09', '+63', '@', 'gmail', 'yahoo', 'email', 'phone', 'contact'],
+};
+
+const scoreApplicant = (app: Application) => {
+  const text = [
+    app.name,
+    app.position,
+    app.education,
+    app.experience,
+    app.coverLetter,
+    app.email,
+    app.phone,
+    ...(app.supportingDocuments ?? []),
+    ...(app.customRequirements ?? []).map(req => `${req.label} ${req.checked ? 'submitted' : ''}`),
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const keywordScore = Object.values(SCORE_KEYWORDS).reduce(
+    (total, words) => total + words.filter(word => text.includes(word)).length,
+    0
+  );
+  const requirementScore = [
+    app.hasResume,
+    app.hasBirthCert,
+    app.hasTOR,
+    app.hasMedCert,
+    ...(app.customRequirements ?? []).map(req => req.checked),
+  ].filter(Boolean).length;
+  const contactScore = Number(Boolean(app.phone)) + Number(Boolean(app.email));
+
+  return Math.min(100, Math.round(keywordScore * 7 + requirementScore * 8 + contactScore * 6));
+};
+
+const extractResumeFields = (text: string): Partial<Application> => {
+  const normalized = text.replace(/\r/g, '\n');
+  const lines = normalized
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const email = normalized.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? '';
+  const phone = normalized.match(/(?:\+63|0)\s?9[\d\s.-]{7,13}/)?.[0]?.replace(/\s+/g, ' ').trim() ?? '';
+  const firstLikelyName = lines.find(line =>
+    /^[A-Za-zÑñ.,' -]{5,}$/.test(line) &&
+    !/(resume|biodata|curriculum|address|email|phone|contact|objective)/i.test(line)
+  );
+  const educationLine = lines.find(line => /(college|university|school|graduate|bachelor|degree|tesda|vocational)/i.test(line));
+  const experienceLine = lines.find(line => /(experience|worked|company|employer|year|cashier|service|attendant|staff|manager)/i.test(line));
+  const addressLine = lines.find(line => /(prk\.?|purok|street|brgy\.?|barangay|city|province|address)/i.test(line));
+  const cleanAddress = addressLine
+    ?.replace(email, '')
+    .replace(phone, '')
+    .replace(firstLikelyName ?? '', '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const nameParts = (firstLikelyName ?? '').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  return {
+    name: firstLikelyName,
+    firstName: nameParts[0] ?? '',
+    middleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
+    lastName: nameParts.length > 1 ? nameParts[nameParts.length - 1] : '',
+    email,
+    phone,
+    address: cleanAddress?.replace(/^address\s*[:|-]\s*/i, ''),
+    education: educationLine,
+    experience: experienceLine,
+    hasResume: true,
+  };
+};
+
+const buildSmsMessage = (app: Application, status: AppStatus = app.status) => {
+  const applicantName = buildApplicantFullName(app);
+  if (status === 'For Interview') {
+    const schedule = app.interviewDate ? ` on ${formatInterviewDateTime(app.interviewDate, app.interviewTime)}` : '';
+    return `Good day ${applicantName}. Your application for ${app.position || 'the position'} is for interview${schedule}. Please bring your requirements.`;
+  }
+  if (status === 'Hired') return `Good day ${applicantName}. Congratulations, you are hired for ${app.position || 'the position'}. Please wait for HR instructions.`;
+  if (status === 'Not Qualified') return `Good day ${applicantName}. Thank you for applying. After review, your application is not qualified at this time.`;
+  return `Good day ${applicantName}. Your application status is ${status}. Please keep your Applicant ID ${app.id} for tracking.`;
+};
+
+const readFileAsText = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+
+const readFileAsArrayBuffer = (file: File) =>
+  new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+
+const extractPdfTextFromFile = async (file: File) => {
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+  const pdf = await pdfjs.getDocument({ data: await readFileAsArrayBuffer(file) }).promise;
+  const pageTexts: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = content.items
+      .map((item: any) => ('str' in item ? item.str : ''))
+      .filter(Boolean)
+      .join(' ');
+    pageTexts.push(text);
+  }
+
+  return pageTexts.join('\n\n').trim();
+};
+
+const extractDocxTextFromFile = async (file: File) => {
+  const mammoth = await import('mammoth');
+  const result = await mammoth.extractRawText({ arrayBuffer: await readFileAsArrayBuffer(file) });
+  return String(result.value ?? '').trim();
+};
+
 export default function RecruitmentManagement() {
   const { user } = useAuth();
   const [applications, setApplications] = useState<Application[]>([]);
@@ -674,6 +822,11 @@ export default function RecruitmentManagement() {
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [loadingDocumentName, setLoadingDocumentName] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<{ name: string; data: string; type: string } | null>(null);
+  const [resumeScannerOpen, setResumeScannerOpen] = useState(false);
+  const [resumeScanText, setResumeScanText] = useState('');
+  const [resumeScanResult, setResumeScanResult] = useState<Partial<Application> | null>(null);
+  const [resumeScanFileName, setResumeScanFileName] = useState('');
+  const [resumeScanLoading, setResumeScanLoading] = useState(false);
 
   // Interview scheduling form
   const [iForm, setIForm] = useState({
@@ -1342,6 +1495,44 @@ export default function RecruitmentManagement() {
 
   const displayData = tabData[tab]?.data ?? searchedApplications;
 
+  const rankedApplications = useMemo(
+    () =>
+      searchedApplications
+        .filter(app => !['Hired', 'Not Qualified', 'Archived'].includes(app.status))
+        .map(app => ({ app, score: scoreApplicant(app) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5),
+    [searchedApplications]
+  );
+
+  const workScopeInsights = useMemo(() => {
+    const activeApplications = applications.filter(app => !app.isArchived);
+    const scopes = [
+      {
+        label: 'Screening',
+        value: activeApplications.filter(app => ['Submitted', 'Under Review', 'Missing Requirements'].includes(app.status)).length,
+        helper: 'Need HR review or requirements validation',
+      },
+      {
+        label: 'Interview',
+        value: activeApplications.filter(app => app.status === 'For Interview').length,
+        helper: 'Ready for FO/GM interview coordination',
+      },
+      {
+        label: 'Conversion',
+        value: activeApplications.filter(app => app.status === 'Hired').length,
+        helper: 'Applicants converted to employees',
+      },
+      {
+        label: 'Archive',
+        value: applications.filter(app => app.isArchived).length,
+        helper: 'Retained records hidden from active workflow',
+      },
+    ];
+    const max = Math.max(1, ...scopes.map(scope => scope.value));
+    return scopes.map(scope => ({ ...scope, percent: Math.round((scope.value / max) * 100) }));
+  }, [applications]);
+
   const recruitmentStats = useMemo(
     () => [
       {
@@ -1444,6 +1635,67 @@ export default function RecruitmentManagement() {
       </Box>
     </Grid>
   );
+
+  const saveResumeScanToSelectedApplicant = async () => {
+    if (!selectedApp || !resumeScanResult) return;
+
+    const localUpdate: Partial<Application> = {
+      ...resumeScanResult,
+      hasResume: true,
+    };
+
+    await updateApplicantRecord(
+      selectedApp.id,
+      applicationToApplicantUpdate(localUpdate),
+      localUpdate,
+      'Resume/biodata scan applied to applicant profile.'
+    );
+    setResumeScannerOpen(false);
+  };
+
+  const handleResumeScanFile = async (file?: File | null) => {
+    if (!file) return;
+
+    setResumeScanFileName(file.name);
+    setResumeScanResult(null);
+    setResumeScanLoading(true);
+
+    try {
+      const lowerName = file.name.toLowerCase();
+      const extractedText = lowerName.endsWith('.pdf') || file.type === 'application/pdf'
+        ? await extractPdfTextFromFile(file)
+        : lowerName.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          ? await extractDocxTextFromFile(file)
+        : file.type.startsWith('text/') || /\.(txt|csv)$/i.test(lowerName)
+          ? await readFileAsText(file)
+          : '';
+
+      if (!extractedText.trim()) {
+        setResumeScanText('');
+        setSnackbar({
+          open: true,
+          message: file.type.startsWith('image/')
+            ? 'Image uploaded. Browser OCR is not available yet, so paste the extracted text or upload a PDF/DOCX resume.'
+            : 'Could not extract text from this file. Try a text-based PDF, a DOCX file, or paste the resume text manually.',
+          severity: 'error',
+        });
+        return;
+      }
+
+      const parsed = extractResumeFields(extractedText);
+      setResumeScanText(extractedText);
+      setResumeScanResult(parsed);
+      setSnackbar({ open: true, message: 'Resume text extracted and parsed.', severity: 'success' });
+    } catch (error: any) {
+      setSnackbar({
+        open: true,
+        message: `Could not read resume file: ${error?.message ?? error}`,
+        severity: 'error',
+      });
+    } finally {
+      setResumeScanLoading(false);
+    }
+  };
 
   const renderRequirementChecklist = () => (
     <Grid size={12}>
@@ -1964,6 +2216,16 @@ export default function RecruitmentManagement() {
           </Box>
 
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            {(isHR || isGM) && (
+              <Button
+                variant="outlined"
+                startIcon={<ContentPasteSearch />}
+                onClick={() => setResumeScannerOpen(true)}
+                sx={{ ...pillButtonSx, py: 1.1, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark, bgcolor: '#ffffff' }}
+              >
+                Resume Scanner
+              </Button>
+            )}
             <Tooltip title="Refresh applications">
               <span>
                 <Button
@@ -2047,6 +2309,81 @@ export default function RecruitmentManagement() {
         >
           {error}
         </Alert>
+      )}
+
+      {(isHR || isGM) && (
+        <Grid container spacing={1.5} sx={{ mb: 2.5 }}>
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <Paper elevation={0} sx={{ ...softCardSx, p: 2, height: '100%' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5 }}>
+                <Box sx={{ width: 40, height: 40, borderRadius: '16px', display: 'grid', placeItems: 'center', bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark }}>
+                  <AutoAwesome fontSize="small" />
+                </Box>
+                <Box>
+                  <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>Top 5 Qualified Applicants</Typography>
+                  <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>Ranked from contact details, requirements, education, and experience keywords.</Typography>
+                </Box>
+              </Box>
+              {rankedApplications.length === 0 ? (
+                <Typography variant="body2" sx={{ color: GREEN_UI.muted }}>No active applicants are ready for ranking.</Typography>
+              ) : (
+                <Box sx={{ display: 'grid', gap: 1 }}>
+                  {rankedApplications.map(({ app, score }, index) => (
+                    <Paper key={app.id} elevation={0} sx={{ p: 1.25, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}`, bgcolor: '#ffffff' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Chip label={`Top ${index + 1}`} size="small" sx={{ fontWeight: 700, bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark }} />
+                        <Box sx={{ flex: 1, minWidth: 180 }}>
+                          <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>{app.name}</Typography>
+                          <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>{app.position || 'No position'} • {app.phone || app.email || 'No contact'}</Typography>
+                        </Box>
+                        <Chip label={`${score}% match`} size="small" variant="outlined" sx={{ fontWeight: 700, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }} />
+                        <Chip
+                          icon={<Sms />}
+                          label="SMS"
+                          size="small"
+                          clickable
+                          variant="outlined"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(`${app.phone}\n${buildSmsMessage(app)}`);
+                            setSnackbar({ open: true, message: 'Applicant contact and SMS message copied for FO handoff.', severity: 'success' });
+                          }}
+                          sx={{ ...chipIconSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
+                        />
+                      </Box>
+                    </Paper>
+                  ))}
+                </Box>
+              )}
+            </Paper>
+          </Grid>
+          <Grid size={{ xs: 12, lg: 6 }}>
+            <Paper elevation={0} sx={{ ...softCardSx, p: 2, height: '100%' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, mb: 1.5 }}>
+                <Box sx={{ width: 40, height: 40, borderRadius: '16px', display: 'grid', placeItems: 'center', bgcolor: GREEN_UI.greenSoft, color: GREEN_UI.greenDark }}>
+                  <TuneOutlined fontSize="small" />
+                </Box>
+                <Box>
+                  <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>Work Scope Optimization</Typography>
+                  <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>Graph view of where recruitment work is piling up.</Typography>
+                </Box>
+              </Box>
+              <Box sx={{ display: 'grid', gap: 1.25 }}>
+                {workScopeInsights.map(scope => (
+                  <Box key={scope.label}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, mb: 0.4 }}>
+                      <Typography variant="body2" fontWeight={700}>{scope.label}</Typography>
+                      <Typography variant="body2" sx={{ color: GREEN_UI.muted }}>{scope.value}</Typography>
+                    </Box>
+                    <Box sx={{ height: 10, borderRadius: '999px', bgcolor: '#edf7eb', overflow: 'hidden', mb: 0.3 }}>
+                      <Box sx={{ height: '100%', width: `${scope.percent}%`, bgcolor: GREEN_UI.green, borderRadius: '999px' }} />
+                    </Box>
+                    <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>{scope.helper}</Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Paper>
+          </Grid>
+        </Grid>
       )}
 
       <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
@@ -2378,6 +2715,29 @@ export default function RecruitmentManagement() {
                         )}
                         {(isHR || isGM) && (
                           <Chip
+                            icon={<Sms />}
+                            label="SMS Copy"
+                            size="small"
+                            clickable
+                            variant="outlined"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(`${app.phone}\n${buildSmsMessage(app)}`);
+                              setSnackbar({ open: true, message: 'SMS-ready status notification copied.', severity: 'success' });
+                            }}
+                            sx={{
+                              ...chipIconSx,
+                              minWidth: 92,
+                              justifyContent: 'center',
+                              fontWeight: 600,
+                              borderColor: GREEN_UI.borderStrong,
+                              color: GREEN_UI.greenDark,
+                              bgcolor: '#ffffff',
+                              '&:hover': { bgcolor: GREEN_UI.greenSoft },
+                            }}
+                          />
+                        )}
+                        {(isHR || isGM) && (
+                          <Chip
                             icon={app.isArchived ? <UnarchiveOutlined /> : <ArchiveOutlined />}
                             label={app.isArchived ? 'Restore' : 'Archive'}
                             size="small"
@@ -2680,6 +3040,19 @@ export default function RecruitmentManagement() {
           )}
           {selectedApp && (isHR || isGM) && (
             <Button
+              variant="outlined"
+              startIcon={<Sms />}
+              onClick={() => {
+                navigator.clipboard?.writeText(`${selectedApp.phone}\n${buildSmsMessage(selectedApp)}`);
+                setSnackbar({ open: true, message: 'SMS-ready applicant notification copied.', severity: 'success' });
+              }}
+              sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
+            >
+              Copy SMS Notice
+            </Button>
+          )}
+          {selectedApp && (isHR || isGM) && (
+            <Button
               variant={viewEditMode ? 'contained' : 'outlined'}
               sx={{
                 ...pillButtonSx,
@@ -2893,6 +3266,99 @@ export default function RecruitmentManagement() {
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${GREEN_UI.border}`, bgcolor: '#ffffff' }}>
           <Button onClick={() => setPreviewDoc(null)} sx={{ ...pillButtonSx }}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={resumeScannerOpen} onClose={() => setResumeScannerOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle fontWeight={700} sx={dialogTitleSx}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <ContentPasteSearch /> Resume / Biodata Scanner
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: '#fbfff9' }}>
+          <Alert severity="info" sx={{ mb: 2, borderRadius: '16px' }}>
+            Upload a text-based PDF or DOCX resume to extract details automatically. Image resumes still need OCR text pasted from the device/scanner.
+          </Alert>
+          <Grid container spacing={2}>
+            <Grid size={12}>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={resumeScanLoading ? <CircularProgress size={16} color="inherit" /> : <ImageIcon />}
+                disabled={resumeScanLoading}
+                sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
+              >
+                {resumeScanLoading ? 'Reading Resume...' : 'Capture / Upload Resume'}
+                <input
+                  hidden
+                  type="file"
+                  accept="image/*,.pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  capture="environment"
+                  onChange={event => {
+                    void handleResumeScanFile(event.target.files?.[0]);
+                    event.target.value = '';
+                  }}
+                />
+              </Button>
+              {resumeScanFileName && <Chip label={resumeScanFileName} size="small" sx={{ ml: 1, fontWeight: 600 }} />}
+            </Grid>
+            <Grid size={{ xs: 12, md: 7 }}>
+              <TextField
+                fullWidth
+                label="Extracted Resume / Biodata Text"
+                multiline
+                minRows={10}
+                value={resumeScanText}
+                onChange={event => setResumeScanText(event.target.value)}
+                placeholder="Paste text extracted from the resume photo here..."
+                sx={softTextFieldSx}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 5 }}>
+              <Paper elevation={0} sx={{ ...innerCardSx, p: 2, height: '100%' }}>
+                <Typography fontWeight={700} sx={{ color: GREEN_UI.greenDark, mb: 1 }}>Detected Fields</Typography>
+                {resumeScanResult ? (
+                  <Box sx={{ display: 'grid', gap: 1 }}>
+                    {[
+                      ['Name', resumeScanResult.name],
+                      ['Phone', resumeScanResult.phone],
+                      ['Email', resumeScanResult.email],
+                      ['Education', resumeScanResult.education],
+                      ['Experience', resumeScanResult.experience],
+                      ['Address', resumeScanResult.address],
+                    ].map(([label, value]) => (
+                      <TextField key={label} label={label} value={value || ''} size="small" disabled sx={softTextFieldSx} />
+                    ))}
+                  </Box>
+                ) : (
+                  <Typography variant="body2" sx={{ color: GREEN_UI.muted }}>Parsed details will appear here.</Typography>
+                )}
+              </Paper>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${GREEN_UI.border}`, bgcolor: '#ffffff' }}>
+          <Button onClick={() => setResumeScannerOpen(false)} sx={pillButtonSx}>Close</Button>
+          <Button
+            variant="contained"
+            startIcon={<AutoAwesome />}
+            onClick={() => setResumeScanResult(extractResumeFields(resumeScanText))}
+            disabled={!resumeScanText.trim()}
+            sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
+          >
+            Auto Fill Details
+          </Button>
+          {selectedApp && (
+            <Button
+              variant="contained"
+              startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <TaskAlt />}
+              onClick={saveResumeScanToSelectedApplicant}
+              disabled={!resumeScanResult || saving}
+              sx={{ ...pillButtonSx, bgcolor: GREEN_UI.greenDark, '&:hover': { bgcolor: '#145c35' } }}
+            >
+              Save to Open Applicant
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

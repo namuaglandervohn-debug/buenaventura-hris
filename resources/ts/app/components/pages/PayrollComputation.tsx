@@ -27,6 +27,8 @@ const POSITION_SALARIES: Record<string, number> = {
 };
 
 const AVAILABLE_POSITIONS = POSITIONS.filter(position => position !== 'Payroll Staff');
+const COMPANY_PAID_LEAVE_TYPE = 'Company Paid Leave';
+const COMPANY_ANNUAL_LEAVE_ALLOWANCE = 5;
 
 interface Payroll {
   id: string;
@@ -56,6 +58,9 @@ interface Payroll {
   silDays?: string; silAmt?: string;
   allowanceAmt?: string;
   retroAmt?: string;
+  leaveConversionDays?: string;
+  leaveConversionAmt?: string;
+  leaveConversionRate?: string;
   tardinessMin?: string;
   undertimeHours?: string;
   sssAmt?: string;
@@ -267,6 +272,34 @@ const getMonthRange = (monthValue: string) => {
   };
 };
 
+const getSemiMonthlyCutoffRange = (monthValue: string, cutoff: string) => {
+  const base = getMonthRange(monthValue);
+  const [year, month] = monthValue.split('-').map(Number);
+  const mm = String(month).padStart(2, '0');
+
+  if (cutoff === '20') {
+    return {
+      ...base,
+      start: `${year}-${mm}-06`,
+      end: `${year}-${mm}-20`,
+      cutoffLabel: `${monthValue} Cutoff 20`,
+      payDateLabel: 'Salary payout every 25th',
+    };
+  }
+
+  const previousMonthDate = new Date(year, month - 2, 1);
+  const previousYear = previousMonthDate.getFullYear();
+  const previousMonth = String(previousMonthDate.getMonth() + 1).padStart(2, '0');
+
+  return {
+    ...base,
+    start: `${previousYear}-${previousMonth}-21`,
+    end: `${year}-${mm}-05`,
+    cutoffLabel: `${monthValue} Cutoff 5`,
+    payDateLabel: 'Salary payout every 10th',
+  };
+};
+
 const monthFromDate = (dateValue?: string | null) =>
   dateValue ? dateValue.slice(0, 7) : new Date().toISOString().slice(0, 7);
 
@@ -294,6 +327,7 @@ export default function PayrollComputation() {
   const [addDialog, setAddDialog] = useState(false);
   const [generateDialog, setGenerateDialog] = useState(false);
   const [generatePeriod, setGeneratePeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [generateCutoff, setGenerateCutoff] = useState('5');
   const [generateBase, setGenerateBase] = useState('510');
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
@@ -426,6 +460,9 @@ export default function PayrollComputation() {
       silAmt: details.silAmt ?? '',
       allowanceAmt: details.allowanceAmt ?? '',
       retroAmt: details.retroAmt ?? '',
+      leaveConversionDays: details.leaveConversionDays ?? '',
+      leaveConversionAmt: details.leaveConversionAmt ?? '',
+      leaveConversionRate: details.leaveConversionRate ?? '',
       sssAmt: details.sssAmt ?? '',
       phicAmt: details.phicAmt ?? '',
       hdmfAmt: details.hdmfAmt ?? '',
@@ -689,7 +726,7 @@ export default function PayrollComputation() {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const { start, end, year } = getMonthRange(generatePeriod);
+      const { start, end, year, cutoffLabel, payDateLabel } = getSemiMonthlyCutoffRange(generatePeriod, generateCutoff);
       const preparedByUserId = await resolveCurrentUserAccountUserId();
 
       const { data: attendanceLogs, error: logsError } = await supabase
@@ -705,7 +742,7 @@ export default function PayrollComputation() {
         const latestHint = latestMonth
           ? ` Latest saved attendance is for ${formatMonthLabel(latestMonth)}.`
           : '';
-        throw new Error(`No attendance logs were found for ${formatMonthLabel(generatePeriod)}.${latestHint} Choose a payroll period with saved Attendance Monitoring records, then generate payroll again.`);
+        throw new Error(`No attendance logs were found for ${cutoffLabel}.${latestHint} Choose a payroll period with saved Attendance Monitoring records, then generate payroll again.`);
       }
 
       const employeeIds = [...new Set(attendanceLogs.map((log: any) => String(log.employee_id)).filter(Boolean))];
@@ -832,6 +869,44 @@ export default function PayrollComputation() {
 
       const payrollId = await getNextPayrollId(year);
       const fallbackRate = parseSalaryRate(generateBase);
+      const isYearEndLeaveConversion = generateCutoff === '5' && String(generatePeriod).endsWith('-12');
+      const leaveAllowanceMap = new Map<string, number>();
+      const usedLeaveMap = new Map<string, number>();
+
+      if (isYearEndLeaveConversion && targetEmployeeIds.size > 0) {
+        const { data: leaveBalances, error: leaveBalancesError } = await supabase
+          .from('employee_leave_balances')
+          .select('employee_id, leave_type, available')
+          .in('employee_id', [...targetEmployeeIds]);
+
+        if (leaveBalancesError) throw leaveBalancesError;
+
+        (leaveBalances ?? []).forEach((row: any) => {
+          const employeeId = String(row.employee_id ?? '');
+          if (!employeeId) return;
+          const leaveType = String(row.leave_type ?? '');
+          const allowance = Number(row.available ?? COMPANY_ANNUAL_LEAVE_ALLOWANCE) || COMPANY_ANNUAL_LEAVE_ALLOWANCE;
+          if (leaveType === COMPANY_PAID_LEAVE_TYPE || !leaveAllowanceMap.has(employeeId)) {
+            leaveAllowanceMap.set(employeeId, Math.max(leaveAllowanceMap.get(employeeId) ?? 0, allowance));
+          }
+        });
+
+        const { data: approvedLeaves, error: approvedLeavesError } = await supabase
+          .from('employee_requests')
+          .select('employee_id, request_type, status, start_date, total_days')
+          .in('employee_id', [...targetEmployeeIds])
+          .eq('request_type', 'Leave')
+          .eq('status', 'Approved')
+          .gte('start_date', `${year}-01-01`)
+          .lte('start_date', `${year}-12-31`);
+
+        if (approvedLeavesError) throw approvedLeavesError;
+
+        (approvedLeaves ?? []).forEach((request: any) => {
+          const employeeId = String(request.employee_id ?? '');
+          usedLeaveMap.set(employeeId, (usedLeaveMap.get(employeeId) ?? 0) + toNumber(request.total_days));
+        });
+      }
 
       const payrollItems = summaries.map((summary: any) => {
         const employee = employeeMap.get(summary.employee_id);
@@ -848,7 +923,11 @@ export default function PayrollComputation() {
         const lateDeduction = roundMoney((lateMinutes / 60) * hourlyRate);
         const undertimeDeduction = roundMoney((undertimeMinutes / 60) * hourlyRate);
         const absenceDeduction = roundMoney(absentDays * salaryRate);
-        const grossPay = roundMoney(basicPay + overtimePay);
+        const annualLeaveAllowance = leaveAllowanceMap.get(summary.employee_id) ?? COMPANY_ANNUAL_LEAVE_ALLOWANCE;
+        const usedLeaveDays = usedLeaveMap.get(summary.employee_id) ?? 0;
+        const unusedLeaveDays = isYearEndLeaveConversion ? Math.max(annualLeaveAllowance - usedLeaveDays, 0) : 0;
+        const leaveConversionPay = roundMoney(unusedLeaveDays * salaryRate);
+        const grossPay = roundMoney(basicPay + overtimePay + leaveConversionPay);
         const totalDeductions = roundMoney(lateDeduction + undertimeDeduction + absenceDeduction);
         const netPay = roundMoney(Math.max(grossPay - totalDeductions, 0));
 
@@ -877,8 +956,14 @@ export default function PayrollComputation() {
           gross_pay: grossPay,
           total_deductions: totalDeductions,
           net_pay: netPay,
-          payslip_details: { payrollDisplayId: formatPayrollDisplayIdFromEmployee(summary.employee_id, start, payrollId), hourlyRate: roundMoney(hourlyRate) },
-          remarks: `Generated from Attendance Monitoring logs for ${generatePeriod}.`,
+          payslip_details: {
+            payrollDisplayId: formatPayrollDisplayIdFromEmployee(summary.employee_id, start, payrollId),
+            hourlyRate: roundMoney(hourlyRate),
+            leaveConversionDays: unusedLeaveDays ? String(unusedLeaveDays) : '',
+            leaveConversionRate: unusedLeaveDays ? money(salaryRate) : '',
+            leaveConversionAmt: unusedLeaveDays ? money(leaveConversionPay) : '',
+          },
+          remarks: `Generated from Attendance Monitoring logs for ${cutoffLabel}. ${payDateLabel}.`,
         };
       });
 
@@ -910,7 +995,7 @@ export default function PayrollComputation() {
           payroll_id: payrollId,
           period_start: start,
           period_end: end,
-          cutoff_label: `${generatePeriod} Payroll`,
+          cutoff_label: cutoffLabel,
           status: 'Draft',
           prepared_by_user_id: preparedByUserId,
           total_employees: totals.total_employees,
@@ -923,7 +1008,7 @@ export default function PayrollComputation() {
           total_overtime_pay: roundMoney(totals.total_overtime_pay),
           total_net_pay: roundMoney(totals.total_net_pay),
           endorsed_to: 'Accounting and Finance Personnel',
-          remarks: 'Generated directly from Attendance Monitoring attendance_logs.',
+          remarks: `Generated directly from Attendance Monitoring attendance_logs. ${payDateLabel}.`,
         });
 
       if (summaryInsertError) throw summaryInsertError;
@@ -1248,6 +1333,7 @@ export default function PayrollComputation() {
         <tr><td>SIL</td><td class="right">${p.silDays || '—'}</td><td class="right">${p.silAmt || '—'}</td></tr>
         <tr><td>Allowance</td><td class="right">—</td><td class="right">${p.allowanceAmt || '—'}</td></tr>
         <tr><td>RETRO/ADJUSTMENT</td><td class="right">—</td><td class="right">${p.retroAmt || '—'}</td></tr>
+        <tr><td>Unused Leave Conversion</td><td class="right">${p.leaveConversionDays || '—'}</td><td class="right">${p.leaveConversionAmt || '—'}</td></tr>
         <tr><td>Tardiness (Mins.)</td><td class="right">${p.tardinessMin || '—'}</td><td class="right">—</td></tr>
         <tr><td>Undertime (Hours)</td><td class="right">${p.undertimeHours || '—'}</td><td class="right">—</td></tr>
         <tr class="gross-row"><td colspan="2" class="center">GROSS PAY</td><td class="right">${fmtAmt(grossAmt)}</td></tr>
@@ -1789,10 +1875,22 @@ export default function PayrollComputation() {
         <DialogTitle fontWeight={700} sx={dialogTitleSx}>Generate Payroll</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '18px !important', px: { xs: 2, sm: 3 }, bgcolor: '#fbfff9' }}>
           <Alert severity="info" sx={{ fontSize: '0.8rem' }}>
-            Auto-generates payroll for <strong>Active</strong> employees. Select a position to target only that role, or leave blank for all. This generates payroll directly from Attendance Monitoring records saved for the selected month.
+            Auto-generates payroll for <strong>Active</strong> employees using the company cutoff cycle: cutoff every <strong>5</strong> and <strong>20</strong>, salary payout every <strong>10</strong> and <strong>25</strong>.
           </Alert>
           <TextField label="Payroll Period" type="month" fullWidth value={generatePeriod}
             onChange={e => setGeneratePeriod(e.target.value)} InputLabelProps={{ shrink: true }} />
+          <TextField
+            label="Cutoff"
+            select
+            fullWidth
+            value={generateCutoff}
+            onChange={e => setGenerateCutoff(e.target.value)}
+            helperText={generateCutoff === '5' ? 'Covers previous month 21st to selected month 5th. Salary payout: 10th.' : 'Covers 6th to 20th. Salary payout: 25th.'}
+            InputLabelProps={{ shrink: true }}
+          >
+            <MenuItem value="5">Cutoff 5 - payout 10</MenuItem>
+            <MenuItem value="20">Cutoff 20 - payout 25</MenuItem>
+          </TextField>
           <TextField
             label="Position (Optional)"
             select fullWidth value={generatePosition}
@@ -2001,6 +2099,7 @@ export default function PayrollComputation() {
                     ['SIL',                 selectedPayroll.silDays   || '—',                            selectedPayroll.silAmt  || '—'],
                     ['Allowance',           '—',                                                          selectedPayroll.allowanceAmt || '—'],
                     ['RETRO/ADJUSTMENT',    '—',                                                          selectedPayroll.retroAmt || '—'],
+                    ['Unused Leave Conversion', selectedPayroll.leaveConversionDays || '—',                selectedPayroll.leaveConversionAmt || '—'],
                     ['Tardiness (Mins.)',   selectedPayroll.tardinessMin   || '—',                       '—'],
                     ['Undertime (Hours)',   selectedPayroll.undertimeHours || '—',                       '—'],
                   ];

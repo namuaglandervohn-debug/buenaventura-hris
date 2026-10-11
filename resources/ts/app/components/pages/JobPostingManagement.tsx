@@ -23,7 +23,7 @@ import {
 import {
   AddCircleOutline,
   AccessTime,
-  Delete,
+  ArchiveOutlined,
   Edit,
   LocationOn,
   Work,
@@ -565,29 +565,29 @@ export default function JobPostingManagement() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (
-      !window.confirm(
-        "Permanently delete this job posting? This cannot be undone.",
-      )
-    ) {
+  const handleArchive = async (job: JobPosting) => {
+    if (!window.confirm(`Archive "${job.title || "this job posting"}"? Applicants remain saved and the post will be hidden from active openings.`)) {
       return;
     }
 
-    setBusyJobId(id);
+    setBusyJobId(job.id);
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("job_postings")
-        .delete()
-        .eq("id", id);
+        .update({ is_active: false })
+        .eq("id", job.id)
+        .select("*")
+        .single();
 
       if (error) throw error;
 
-      setJobs((prev) => prev.filter((job) => job.id !== id));
-      showSnackbar("Job posting deleted permanently.");
+      setJobs((prev) =>
+        prev.map((item) => (item.id === job.id ? (data as JobPosting) : item)),
+      );
+      showSnackbar("Job posting archived. Applicants were retained.");
     } catch (error: any) {
-      showSnackbar(error?.message || "Failed to delete job posting.", "error");
+      showSnackbar(error?.message || "Failed to archive job posting.", "error");
     } finally {
       setBusyJobId(null);
     }
@@ -1155,21 +1155,21 @@ export default function JobPostingManagement() {
 
                       <Button
                         fullWidth={isMobile}
-                        color="error"
+                        color="warning"
                         variant="outlined"
-                        startIcon={<Delete />}
-                        onClick={() => handleDelete(job.id)}
-                        disabled={isBusy}
+                        startIcon={<ArchiveOutlined />}
+                        onClick={() => handleArchive(job)}
+                        disabled={isBusy || !job.is_active}
                         sx={{
                           ...pillButtonSx,
-                          borderColor: "rgba(211, 80, 80, 0.34)",
+                          borderColor: "rgba(214, 151, 63, 0.42)",
                           "&:hover": {
-                            borderColor: "#D34F4F",
-                            backgroundColor: "rgba(255, 235, 235, 0.65)",
+                            borderColor: "#D6973F",
+                            backgroundColor: "rgba(255, 248, 226, 0.65)",
                           },
                         }}
                       >
-                        Delete
+                        Archive
                       </Button>
 
                       <Button
