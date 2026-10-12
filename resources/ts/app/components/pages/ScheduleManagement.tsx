@@ -6,6 +6,9 @@ import {
   CircularProgress, Alert, Tooltip, InputAdornment,
   Checkbox,
   Autocomplete,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
 } from '@mui/material';
 import {
   AccessTime,
@@ -77,6 +80,18 @@ const EMPTY = {
   sunday: '',
 };
 
+const EMPTY_SPECIAL_DUTY = {
+  employeeIds: [] as string[],
+  position: '',
+  outlet: '',
+  dutyDate: '',
+  shift: '',
+  timeIn: '',
+  timeOut: '',
+  breakTime: '1 hour',
+  reason: '',
+};
+
 const SHIFT_PRESETS = [
   'Off',
   '6:00 AM – 3:00 PM',
@@ -91,6 +106,7 @@ const SHIFT_PRESETS = [
 ];
 
 const BREAK_TIME_OPTIONS = ['30 minutes', '1 hour', '1 hour 30 minutes', '2 hours'];
+const SPECIAL_DUTY_SEPARATOR = ' | Special Duty: ';
 const PHOTO_SCHEDULE_WEEK = 'May 11-17, 2026';
 const PHOTO_SCHEDULE_ROWS = [
   {
@@ -296,6 +312,64 @@ const sortSchedulesByEmployeeName = (rows: Schedule[]) =>
     })
   );
 
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_INDEX = new Map(MONTHS.map((month, index) => [month.toLowerCase(), index]));
+const DATE_DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+const parseDateInput = (value: string) => {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const stripSpecialDutyReason = (week: string) => String(week ?? '').split(SPECIAL_DUTY_SEPARATOR)[0].trim();
+const getSpecialDutyReason = (week: string) => String(week ?? '').split(SPECIAL_DUTY_SEPARATOR)[1]?.trim() ?? '';
+
+const formatWeekRangeFromDate = (value: string) => {
+  const selected = parseDateInput(value);
+  if (!selected) return '';
+
+  const day = selected.getDay();
+  const monday = new Date(selected);
+  monday.setDate(selected.getDate() - (day === 0 ? 6 : day - 1));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const mDay = monday.getDate(), sDay = sunday.getDate();
+  const mMonth = monday.getMonth(), sMonth = sunday.getMonth();
+  const year = sunday.getFullYear();
+  if (mMonth === sMonth) return `${MONTHS[mMonth]} ${mDay}–${sDay}, ${year}`;
+  return `${MONTHS[mMonth]} ${mDay} – ${MONTHS[sMonth]} ${sDay}, ${year}`;
+};
+
+const parseWeekRange = (week: string) => {
+  const normalized = stripSpecialDutyReason(week).replace(/[—–]/g, '-').replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/^([A-Za-z]+)\s+(\d{1,2})\s*-\s*(?:([A-Za-z]+)\s+)?(\d{1,2}),\s*(\d{4})$/);
+  if (!match) return null;
+
+  const startMonth = MONTH_INDEX.get(match[1].toLowerCase());
+  const endMonth = MONTH_INDEX.get((match[3] || match[1]).toLowerCase());
+  if (startMonth === undefined || endMonth === undefined) return null;
+
+  const endYear = Number(match[5]);
+  const startYear = startMonth > endMonth ? endYear - 1 : endYear;
+  const start = new Date(startYear, startMonth, Number(match[2]));
+  const end = new Date(endYear, endMonth, Number(match[4]));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return { start, end };
+};
+
+const isDateInScheduleWeek = (week: string, value: string) => {
+  const selected = parseDateInput(value);
+  const range = parseWeekRange(week);
+  if (!selected || !range) return stripSpecialDutyReason(week) === formatWeekRangeFromDate(value);
+  return selected >= range.start && selected <= range.end;
+};
+
+const hasScheduledShift = (value?: string | null) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return Boolean(normalized) && !['-', '—', 'off', 'rd', 'rest day', 'suspended'].includes(normalized);
+};
+
 const GREEN_UI = {
   pageBg: 'radial-gradient(circle at top left, rgba(220, 246, 219, 0.95), rgba(248, 252, 245, 0.98) 34%, #f7fbf3 100%)',
   cardBg: 'rgba(255, 255, 255, 0.92)',
@@ -399,7 +473,6 @@ const getWeekRange = (offsetWeeks: number = 0): string => {
   monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1) + offsetWeeks * 7);
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
-  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const mDay = monday.getDate(), sDay = sunday.getDate();
   const mMonth = monday.getMonth(), sMonth = sunday.getMonth();
   const year = sunday.getFullYear();
@@ -424,6 +497,8 @@ export default function ScheduleManagement() {
   const [editForm, setEditForm] = useState(EMPTY);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [applicableWorkdays, setApplicableWorkdays] = useState<string[]>(['monday', 'tuesday', 'wednesday', 'thursday', 'friday']);
+  const [scheduleType, setScheduleType] = useState<'regular' | 'special'>('regular');
+  const [specialDutyForm, setSpecialDutyForm] = useState(EMPTY_SPECIAL_DUTY);
 
   // Employee list with position + outlet for auto-fill
   const [employeeList, setEmployeeList] = useState<{
@@ -672,6 +747,94 @@ export default function ScheduleManagement() {
     setSaving(false);
   }
 };
+
+  const resetSpecialDutyForm = () => {
+    setSpecialDutyForm(EMPTY_SPECIAL_DUTY);
+  };
+
+  const handleSaveSpecialDuty = async () => {
+    const selectedEmployees = specialDutyForm.employeeIds
+      .map(employeeId => getEmployeeById(employeeId))
+      .filter(Boolean) as NonNullable<ReturnType<typeof getEmployeeById>>[];
+    const dutyDate = specialDutyForm.dutyDate;
+    const selectedDate = parseDateInput(dutyDate);
+    const dayKey = selectedDate ? DATE_DAY_KEYS[selectedDate.getDay()] : '';
+    const shift = (specialDutyForm.shift || (specialDutyForm.timeIn && specialDutyForm.timeOut ? `${specialDutyForm.timeIn} - ${specialDutyForm.timeOut}` : '')).trim();
+    const reason = specialDutyForm.reason.trim();
+    const weekRange = formatWeekRangeFromDate(dutyDate);
+
+    if (selectedEmployees.length === 0) {
+      setSnackbar({ open: true, message: 'Choose at least one employee for the special duty assignment.', severity: 'error' });
+      return;
+    }
+
+    if (!selectedDate || !dayKey || !weekRange) {
+      setSnackbar({ open: true, message: 'Choose a valid additional duty date.', severity: 'error' });
+      return;
+    }
+
+    if (!shift) {
+      setSnackbar({ open: true, message: 'Enter or select the additional duty shift.', severity: 'error' });
+      return;
+    }
+
+    if (!reason) {
+      setSnackbar({ open: true, message: 'Enter the reason for this additional duty assignment.', severity: 'error' });
+      return;
+    }
+
+    const conflict = schedules.find(schedule => {
+      const isSelectedEmployee = selectedEmployees.some(employee => employee.employeeId === schedule.employeeId);
+      return isSelectedEmployee &&
+        isDateInScheduleWeek(schedule.week, dutyDate) &&
+        hasScheduledShift(schedule[dayKey as keyof Schedule] as string);
+    });
+
+    if (conflict) {
+      const conflictEmployee = selectedEmployees.find(employee => employee.employeeId === conflict.employeeId);
+      setSnackbar({
+        open: true,
+        message: `Conflict found: ${conflictEmployee?.name ?? conflict.employee} already has ${conflict[dayKey as keyof Schedule]} on ${dutyDate} in ${stripSpecialDutyReason(conflict.week)}.`,
+        severity: 'error',
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const scheduleIds = await nextScheduleIds(selectedEmployees.length);
+      const dayAssignments = DAYS.reduce((acc, day) => ({
+        ...acc,
+        [day]: day === dayKey ? shift : 'Off',
+      }), {} as Record<string, string>);
+
+      const payload = selectedEmployees.map((employee, index) => ({
+        schedule_id: scheduleIds[index],
+        employee_id: employee.employeeId,
+        position: employee.position || specialDutyForm.position || '',
+        outlet: employee.outlet || specialDutyForm.outlet || '',
+        week: `${weekRange}${SPECIAL_DUTY_SEPARATOR}${reason}`,
+        time_in: specialDutyForm.timeIn || null,
+        time_out: specialDutyForm.timeOut || null,
+        break_time: specialDutyForm.breakTime || '',
+        ...dayAssignments,
+        status: 'Draft',
+      }));
+
+      const { error } = await supabase.from('schedule').insert(payload);
+      if (error) throw error;
+
+      setOpenDialog(false);
+      setSpecialDutyForm(EMPTY_SPECIAL_DUTY);
+      setScheduleType('regular');
+      await fetchSchedules();
+      setSnackbar({ open: true, message: `Special duty assignment saved as draft for ${selectedEmployees.length} employee(s).`, severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({ open: true, message: `Failed: ${e.message ?? e}`, severity: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Publish: only callable when status === 'Draft'; after success button hides until next edit
   const handlePublish = async (s: Schedule) => {
@@ -1325,7 +1488,13 @@ export default function ScheduleManagement() {
               <Button
                 variant="contained"
                 startIcon={<AddCircleOutline />}
-                onClick={() => { setForm(EMPTY); setOpenDialog(true); }}
+                onClick={() => {
+                  setForm(EMPTY);
+                  setSelectedEmployeeIds([]);
+                  setScheduleType('regular');
+                  resetSpecialDutyForm();
+                  setOpenDialog(true);
+                }}
                 sx={{
                   ...pillButtonSx,
                   py: 1.1,
@@ -1736,11 +1905,19 @@ export default function ScheduleManagement() {
                     />
                   </TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
                       <CalendarMonth sx={{ fontSize: 17, color: GREEN_UI.greenDark }} />
                       <Typography variant="body2" fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                        {s.week || '—'}
+                        {stripSpecialDutyReason(s.week) || '—'}
                       </Typography>
+                      {getSpecialDutyReason(s.week) && (
+                        <Chip
+                          label={`Special Duty: ${getSpecialDutyReason(s.week)}`}
+                          size="small"
+                          variant="outlined"
+                          sx={{ fontWeight: 700, bgcolor: '#fff8e4', borderColor: '#f1d487', color: '#765a12' }}
+                        />
+                      )}
                     </Box>
                   </TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>
@@ -1885,16 +2062,41 @@ export default function ScheduleManagement() {
             </Box>
             <Box>
               <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
-                Create Weekly Schedule
+                Create Schedule
               </Typography>
               <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                Assign employee shifts and save them as draft before publishing.
+                Create a regular weekly schedule or assign an employee for special duty.
               </Typography>
             </Box>
           </Box>
         </DialogTitle>
         <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: '#fbfff9' }}>
           {importingExcel && <Alert severity="info" sx={{ mb: 2, borderRadius: '16px' }}>⏳ Importing from Excel…</Alert>}
+          <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
+            <Typography fontWeight={700} sx={{ color: GREEN_UI.text, mb: 0.75, textAlign: 'center' }}>
+              Schedule Type
+            </Typography>
+            <RadioGroup
+              row
+              value={scheduleType}
+              onChange={event => {
+                const nextType = event.target.value as 'regular' | 'special';
+                setScheduleType(nextType);
+                if (nextType === 'regular') resetSpecialDutyForm();
+                if (nextType === 'special') {
+                  setSelectedEmployeeIds([]);
+                  setForm(EMPTY);
+                }
+              }}
+              sx={{ justifyContent: 'center', gap: { xs: 1.5, sm: 4 }, flexWrap: 'wrap' }}
+            >
+              <FormControlLabel value="regular" control={<Radio size="small" sx={{ color: GREEN_UI.greenDark, '&.Mui-checked': { color: GREEN_UI.greenDark } }} />} label="Regular Schedule" />
+              <FormControlLabel value="special" control={<Radio size="small" sx={{ color: GREEN_UI.greenDark, '&.Mui-checked': { color: GREEN_UI.greenDark } }} />} label="Special Duty" />
+            </RadioGroup>
+          </Paper>
+
+          {scheduleType === 'regular' ? (
+          <>
           <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
               <PersonOutline sx={{ color: GREEN_UI.greenDark }} />
@@ -2105,6 +2307,173 @@ export default function ScheduleManagement() {
               ))}
             </Grid>
           </Paper>
+          </>
+          ) : (
+          <>
+          <Alert severity="info" sx={{ mb: 2, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}` }}>
+            The system checks the selected employee&apos;s existing schedule for that date before saving.
+          </Alert>
+          <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 }, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+              <PersonOutline sx={{ color: GREEN_UI.greenDark }} />
+              <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>Special Duty Assignment</Typography>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12 }}>
+                <Autocomplete
+                  multiple
+                  disableCloseOnSelect
+                  options={employeeList}
+                  getOptionLabel={(option) => `${option.name} (${option.employeeId})`}
+                  value={employeeList.filter(emp => specialDutyForm.employeeIds.includes(emp.employeeId))}
+                  onChange={(_, selected) => {
+                    setSpecialDutyForm(prev => ({
+                      ...prev,
+                      employeeIds: selected.map(employee => employee.employeeId),
+                      position: selected[0]?.position ?? '',
+                      outlet: selected[0]?.outlet ?? '',
+                    }));
+                  }}
+                  renderOption={(props, option, { selected }) => (
+                    <li {...props}>
+                      <Checkbox
+                        size="small"
+                        checked={selected}
+                        sx={{ mr: 1, color: GREEN_UI.greenDark, '&.Mui-checked': { color: GREEN_UI.greenDark } }}
+                      />
+                      {option.name} ({option.employeeId})
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      fullWidth
+                      required
+                      label="Employees"
+                      placeholder="Choose employees"
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
+                      sx={softTextFieldSx}
+                    />
+                  )}
+                />
+                <Typography variant="caption" sx={{ color: GREEN_UI.muted, mt: 0.75, display: 'block' }}>
+                  For special duty, select one or more employees who need the same additional duty assignment.
+                </Typography>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Duty Date"
+                  type="date"
+                  required
+                  value={specialDutyForm.dutyDate}
+                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, dutyDate: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={softTextFieldSx}
+                  helperText={specialDutyForm.dutyDate ? formatWeekRangeFromDate(specialDutyForm.dutyDate) : 'Select the added duty date.'}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <Autocomplete
+                  freeSolo
+                  options={SHIFT_PRESETS.filter(shift => shift !== 'Off')}
+                  value={specialDutyForm.shift}
+                  onChange={(_, value) => setSpecialDutyForm(prev => ({ ...prev, shift: value ?? '' }))}
+                  onInputChange={(_, value) => setSpecialDutyForm(prev => ({ ...prev, shift: value }))}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      fullWidth
+                      required
+                      label="Duty Shift"
+                      placeholder="e.g. 8:00 AM - 5:00 PM"
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
+                      sx={softTextFieldSx}
+                    />
+                  )}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  label="Start Time"
+                  type="time"
+                  value={specialDutyForm.timeIn}
+                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, timeIn: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  label="End Time"
+                  type="time"
+                  value={specialDutyForm.timeOut}
+                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, timeOut: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <Autocomplete
+                  freeSolo
+                  options={BREAK_TIME_OPTIONS}
+                  value={specialDutyForm.breakTime}
+                  onChange={(_, value) => setSpecialDutyForm(prev => ({ ...prev, breakTime: value ?? '' }))}
+                  onInputChange={(_, value) => setSpecialDutyForm(prev => ({ ...prev, breakTime: value }))}
+                  renderInput={(params) => (
+                    <TextField {...params} fullWidth label="Break Time" size="small" InputLabelProps={{ shrink: true }} sx={softTextFieldSx} />
+                  )}
+                />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  fullWidth
+                  required
+                  multiline
+                  minRows={3}
+                  label="Reason for Special Duty"
+                  placeholder="Example: Peak season additional coverage"
+                  value={specialDutyForm.reason}
+                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, reason: event.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={softTextFieldSx}
+                />
+              </Grid>
+            </Grid>
+          </Paper>
+          <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 } }}>
+            <Typography fontWeight={700} sx={{ color: GREEN_UI.text, mb: 1 }}>
+              Form Preview
+            </Typography>
+            <Typography variant="body2" fontWeight={800} sx={{ color: GREEN_UI.greenDark }}>
+              Special Duty Assignment
+            </Typography>
+            {[
+              ['Employees', specialDutyForm.employeeIds.length > 0
+                ? employeeList
+                    .filter(employee => specialDutyForm.employeeIds.includes(employee.employeeId))
+                    .map(employee => employee.name)
+                    .join(', ')
+                : 'Not selected'],
+              ['Date', specialDutyForm.dutyDate || 'Not selected'],
+              ['Time', specialDutyForm.shift || (specialDutyForm.timeIn && specialDutyForm.timeOut ? `${specialDutyForm.timeIn} - ${specialDutyForm.timeOut}` : 'Not selected')],
+              ['Reason', specialDutyForm.reason || 'Not provided'],
+            ].map(([label, value]) => (
+              <Typography key={label} variant="caption" sx={{ display: 'block', color: GREEN_UI.muted, lineHeight: 1.7 }}>
+                <strong>{label}:</strong> {value}
+              </Typography>
+            ))}
+          </Paper>
+          </>
+          )}
         </DialogContent>
         <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, bgcolor: '#fbfff9', borderTop: `1px solid ${GREEN_UI.border}` }}>
           <Button startIcon={<CancelOutlined />} onClick={() => setOpenDialog(false)} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>
@@ -2112,12 +2481,12 @@ export default function ScheduleManagement() {
           </Button>
           <Button
             variant="contained"
-            onClick={handleSaveDraft}
+            onClick={scheduleType === 'regular' ? handleSaveDraft : handleSaveSpecialDuty}
             disabled={saving}
             startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <TaskAlt />}
             sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
           >
-            {saving ? 'Saving…' : 'Save as Draft'}
+            {saving ? (scheduleType === 'regular' ? 'Saving…' : 'Checking…') : (scheduleType === 'regular' ? 'Save as Draft' : 'Save Special Duty')}
           </Button>
         </DialogActions>
       </Dialog>
