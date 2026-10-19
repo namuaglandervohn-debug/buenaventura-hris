@@ -337,26 +337,65 @@ Route::post('/applications/hired-account', function (Request $request) {
     $outlet = trim((string) ($data['outlet'] ?? ''));
     $serviceKey = supabaseServiceRoleKey();
 
-    $authUserId = null;
-    $usersResponse = Http::withHeaders([
-        'apikey' => $serviceKey,
-        'Authorization' => 'Bearer '.$serviceKey,
-    ])->acceptJson()->get(supabaseBaseUrl().'/auth/v1/admin/users', [
-        'page' => 1,
-        'per_page' => 1000,
+    $existingProfiles = supabaseRest('GET', '/rest/v1/user_accounts', null, [
+        'select' => 'user_id,auth_user_id,email,employee_id,role,outlet',
+        'employee_id' => 'eq.'.$employeeId,
     ]);
-
-    if ($usersResponse->failed()) {
-        throw ValidationException::withMessages([
-            'supabase' => $usersResponse->json('message') ?? $usersResponse->body(),
-        ]);
+    if (count($existingProfiles) > 1) {
+        throw ValidationException::withMessages(['email' => 'Multiple accounts are linked to this employee. Review them in User Accounts.']);
+    }
+    $existingProfile = $existingProfiles[0] ?? null;
+    if ($existingProfile && $existingProfile['role'] !== 'employee') {
+        throw ValidationException::withMessages(['email' => 'This employee is linked to a different account role. No account was reset.']);
+    }
+    $email = $existingProfile['email'] ?? $email;
+    $emailProfiles = supabaseRest('GET', '/rest/v1/user_accounts', null, [
+        'select' => 'employee_id,role', 'email' => 'eq.'.$email,
+    ]);
+    foreach ($emailProfiles as $profile) {
+        if (($profile['employee_id'] ?? null) !== $employeeId || $profile['role'] !== 'employee') {
+            throw ValidationException::withMessages(['email' => 'That login email belongs to another account. No account was reset.']);
+        }
     }
 
-    $users = $usersResponse->json('users') ?? [];
-    foreach ($users as $authUser) {
-        if (strtolower((string) ($authUser['email'] ?? '')) === $email) {
-            $authUserId = $authUser['id'] ?? null;
+    $authUserId = null;
+    for ($page = 1; ; $page++) {
+        $usersResponse = Http::withHeaders([
+            'apikey' => $serviceKey,
+            'Authorization' => 'Bearer '.$serviceKey,
+        ])->acceptJson()->get(supabaseBaseUrl().'/auth/v1/admin/users', [
+            'page' => $page,
+            'per_page' => 1000,
+        ]);
+
+        if ($usersResponse->failed()) {
+            throw ValidationException::withMessages([
+                'supabase' => $usersResponse->json('message') ?? $usersResponse->body(),
+            ]);
+        }
+
+        $users = $usersResponse->json('users') ?? [];
+        foreach ($users as $authUser) {
+            if (strtolower((string) ($authUser['email'] ?? '')) === strtolower($email)) {
+                $authUserId = $authUser['id'] ?? null;
+                if (($existingProfile['auth_user_id'] ?? null) !== $authUserId && ($authUser['user_metadata']['employee_id'] ?? null) !== $employeeId) {
+                    throw ValidationException::withMessages(['email' => 'That login email already exists for another identity. No account was reset.']);
+                }
+                break;
+            }
+        }
+        if ($authUserId || count($users) < 1000) {
             break;
+        }
+    }
+    if ($authUserId) {
+        $linkedProfiles = supabaseRest('GET', '/rest/v1/user_accounts', null, [
+            'select' => 'employee_id,role', 'auth_user_id' => 'eq.'.$authUserId,
+        ]);
+        foreach ($linkedProfiles as $profile) {
+            if (($profile['employee_id'] ?? null) !== $employeeId || $profile['role'] !== 'employee') {
+                throw ValidationException::withMessages(['email' => 'That login is linked to another account. No account was reset.']);
+            }
         }
     }
 
@@ -400,12 +439,6 @@ Route::post('/applications/hired-account', function (Request $request) {
         ]);
     }
 
-    $existingProfiles = supabaseRest('GET', '/rest/v1/user_accounts', null, [
-        'select' => 'user_id',
-        'or' => "(employee_id.eq.{$employeeId},email.eq.{$email})",
-        'limit' => 1,
-    ]);
-
     $profilePayload = [
         'auth_user_id' => $authUserId,
         'employee_id' => $employeeId,
@@ -417,28 +450,17 @@ Route::post('/applications/hired-account', function (Request $request) {
         'email' => $email,
         'password' => null,
         'role' => 'employee',
-        'outlet' => $outlet ?: null,
+        'outlet' => ($existingProfile['outlet'] ?? null) ?: ($outlet ?: null),
         'is_active' => true,
     ];
 
-    $existingProfile = $existingProfiles[0] ?? null;
     if ($existingProfile) {
         $profiles = supabaseRest('PATCH', '/rest/v1/user_accounts', $profilePayload, [
             'user_id' => 'eq.'.$existingProfile['user_id'],
         ]);
     } else {
-        $year = now()->year;
-        $existingUsers = supabaseRest('GET', '/rest/v1/user_accounts', null, [
-            'select' => 'user_id',
-            'user_id' => "like.USR-{$year}-%",
-        ]);
-        $maxSequence = collect($existingUsers)
-            ->map(fn ($row) => (string) ($row['user_id'] ?? ''))
-            ->map(fn (string $userId): int => preg_match("/^USR-{$year}-(\d+)$/", $userId, $matches) ? (int) $matches[1] : 0)
-            ->max() ?? 0;
-
         $profiles = supabaseRest('POST', '/rest/v1/user_accounts', array_merge([
-            'user_id' => sprintf('USR-%s-%04d', $year, $maxSequence + 1),
+            'user_id' => 'USR-'.now()->year.'-'.strtoupper(bin2hex(random_bytes(8))),
         ], $profilePayload));
     }
 

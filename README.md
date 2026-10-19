@@ -7,6 +7,14 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Employee account API deployment
+
+Vercel serves `api/applications/hired-account.js`; local Laravel serves the same URL through `routes/api.php`. Deploy the API functions together with the frontend, rather than uploading only `dist/`.
+
+Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the server hosting environment and redeploy after changing them. The service-role key must remain server-only. HR/Admin or General Manager must be signed in to create or reset an employee login. Existing employee accounts retain their login email; new emails include the employee ID to distinguish employees with the same name.
+
+Run account and session regression checks with `node --test tests/*.test.mjs`.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:

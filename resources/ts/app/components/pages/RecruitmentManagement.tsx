@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { loadApplicationFiles } from '../../lib/applicationFiles';
+import { apiErrorMessage } from '../../lib/apiError';
 import {
   Sync,
   CalendarMonth,
@@ -811,6 +812,8 @@ export default function RecruitmentManagement() {
   const [viewEditMode, setViewEditMode] = useState(false);
   const [interviewDialog, setInterviewDialog] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const hiringInProgress = useRef(false);
   const [tab, setTab] = useState(0);
   const [archiveView, setArchiveView] = useState<'active' | 'archived'>('active');
   const [snackbar, setSnackbar] = useState({
@@ -1134,6 +1137,9 @@ export default function RecruitmentManagement() {
   };
 
   const handleHiringDecision = async (id: string, decision: 'Hired' | 'Not Qualified') => {
+    if (hiringInProgress.current) return;
+    hiringInProgress.current = true;
+    setCreatingAccount(true);
     const status: AppStatus = decision === 'Hired' ? 'Hired' : 'Not Qualified';
 
     try {
@@ -1248,8 +1254,9 @@ export default function RecruitmentManagement() {
 
         const body = await response.json().catch(() => null);
         if (!response.ok) {
-          throw new Error(body?.message || body?.email || body?.supabase || 'Unable to create Supabase Auth account.');
+          throw new Error(apiErrorMessage(body, response.status, 'Employee account creation failed. Please try again.'));
         }
+        if (!body?.auth_user_id || !body?.user?.email) throw new Error('The account service returned an incomplete response. Please try again.');
 
         return body;
       };
@@ -1296,19 +1303,22 @@ export default function RecruitmentManagement() {
       };
 
       const { error: employeeSaveError } = existingEmployee
-        ? await supabase.from('employees').update(employeePayload).eq('employee_id', employeeId)
+        ? { error: null }
         : await supabase.from('employees').insert(employeePayload);
 
       if (employeeSaveError) throw employeeSaveError;
 
-      const loginEmail = `${loginName}@buenaventura-hris.me`;
+      const { data: linkedAccount, error: linkedAccountError } = await supabase.from('user_accounts').select('email').eq('employee_id', employeeId).maybeSingle();
+      if (linkedAccountError) throw linkedAccountError;
+      let loginEmail = linkedAccount?.email || `${loginName}.${employeeId.toLowerCase()}@buenaventura-hris.me`;
       const temporaryPassword = generateTemporaryPassword(loginName);
-      await createOrResetHiredAccount({
+      const accountResult = await createOrResetHiredAccount({
         employeeId,
         name: fullName,
         email: loginEmail,
         password: temporaryPassword,
       });
+      loginEmail = accountResult.user.email;
 
       setSnackbar({
         open: true,
@@ -1339,6 +1349,9 @@ export default function RecruitmentManagement() {
       void fetchApplications({ silent: true });
     } catch (e: any) {
       setSnackbar({ open: true, message: `Failed: ${e.message}`, severity: 'error' });
+    } finally {
+      hiringInProgress.current = false;
+      setCreatingAccount(false);
     }
   };
 
@@ -3118,7 +3131,7 @@ export default function RecruitmentManagement() {
                 color="error"
                 startIcon={<CancelOutlined />}
                 onClick={() => handleHiringDecision(selectedApp.id, 'Not Qualified')}
-                disabled={saving}
+                disabled={saving || creatingAccount}
                 sx={{ ...pillButtonSx }}
               >
                 Not Qualified
@@ -3128,7 +3141,7 @@ export default function RecruitmentManagement() {
                 color="success"
                 startIcon={<TaskAlt />}
                 onClick={() => handleHiringDecision(selectedApp.id, 'Hired')}
-                disabled={saving}
+                disabled={saving || creatingAccount}
                 sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
               >
                 Hire Applicant
@@ -3142,10 +3155,10 @@ export default function RecruitmentManagement() {
               color="success"
               startIcon={<HowToReg />}
               onClick={() => handleHiringDecision(selectedApp.id, 'Hired')}
-              disabled={saving}
+              disabled={saving || creatingAccount}
               sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
             >
-              Create / Reset Employee Account
+              {creatingAccount ? 'Preparing Employee Account…' : 'Create / Reset Employee Account'}
             </Button>
           )}
         </DialogActions>
