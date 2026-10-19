@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 import {
@@ -15,6 +15,7 @@ import {
   IconButton,
   Stack,
   Chip,
+  CircularProgress,
 } from "@mui/material";
 import {
   Lock,
@@ -34,6 +35,8 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [selectedDemo, setSelectedDemo] = useState("");
+  const submitting = useRef(false);
+  const [signingIn, setSigningIn] = useState(false);
   const { login, user, loading, logout } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -53,12 +56,17 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || submitting.current) return;
+    submitting.current = true;
+    setSigningIn(true);
     setError("");
     try {
       await login(email, password);
-      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid email or password");
+    } finally {
+      submitting.current = false;
+      setSigningIn(false);
     }
   };
 
@@ -303,6 +311,7 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} noValidate>
               <TextField
                 select
+                disabled={loading || signingIn}
                 fullWidth
                 label="Quick Demo Account"
                 value={selectedDemo}
@@ -366,9 +375,10 @@ export default function LoginPage() {
               <TextField
                 fullWidth
                 label="Email"
+                disabled={loading || signingIn}
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setSelectedDemo(''); }}
                 margin="normal"
                 required
                 InputProps={{
@@ -384,12 +394,13 @@ export default function LoginPage() {
               <TextField
                 fullWidth
                 label="Password"
+                disabled={loading || signingIn}
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 margin="normal"
                 required
-                helperText="Use the password configured in Supabase Auth"
+                helperText="Enter your account password"
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
@@ -423,6 +434,9 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
+                disabled={loading || signingIn}
+                aria-busy={loading || signingIn}
+                startIcon={loading || signingIn ? <CircularProgress size={18} color="inherit" /> : undefined}
                 fullWidth
                 variant="contained"
                 size="large"
@@ -448,7 +462,7 @@ export default function LoginPage() {
                   transition: "all 180ms ease",
                 }}
               >
-                Sign In to HRIS
+                {signingIn ? 'Signing in…' : loading ? 'Checking session…' : 'Sign In to HRIS'}
               </Button>
             </form>
 
@@ -485,7 +499,9 @@ export default function LoginPage() {
                     label={a.role}
                     size="small"
                     variant="outlined"
+                    disabled={loading || signingIn}
                     onClick={() => {
+                      setSelectedDemo(a.email);
                       setEmail(a.email);
                       setPassword(a.password);
                     }}

@@ -1,4 +1,5 @@
 import { useAuth } from '../../context/AuthContext';
+import { Alert } from '@mui/material';
 import HRDashboard from './HRDashboard';
 import EmployeeDashboard from './EmployeeDashboard';
 import SupervisorDashboard from './SupervisorDashboard';
@@ -12,8 +13,7 @@ export default function DashboardRouter() {
     case 'supervisor': return <SupervisorDashboard />;
     case 'gm': return <GMDashboard />;
     case 'accounting': return <AccountingDashboard />;
-    case 'hr':
-    default:
-      return <HRDashboard />;
+    case 'hr': return <HRDashboard />;
+    default: return <Alert severity="error">Your account has no supported dashboard. Please contact HR.</Alert>;
   }
 }
