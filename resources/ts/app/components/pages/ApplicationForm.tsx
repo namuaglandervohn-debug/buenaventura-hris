@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Box, Typography, Paper, TextField, Button, MenuItem, Alert,
@@ -11,6 +11,7 @@ import FileUploadField from '../FileUploadField';
 import { copyToClipboard } from '../../lib/copyToClipboard';
 import { saveApplicationFiles } from '../../lib/applicationFiles';
 import { supabase } from '../../lib/supabaseClient';
+import { submitApplicant } from '../../lib/submitApplicant';
 import ActionSnackbar from '../ActionSnackbar';
 
 /** Convert a File to a base64 data URI */
@@ -32,6 +33,7 @@ export default function ApplicationForm() {
   const [resumeFiles, setResumeFiles] = useState<File[]>([]);
   const [supportingFiles, setSupportingFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const submissionInProgress = useRef(false);
   const [error, setError] = useState('');
   const [successDialog, setSuccessDialog] = useState(false);
   const [newAppId, setNewAppId] = useState('');
@@ -40,6 +42,8 @@ export default function ApplicationForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionInProgress.current) return;
+    submissionInProgress.current = true;
     setSubmitting(true); setError('');
     try {
       // Encode files as base64 so they persist and are viewable in HR view
@@ -57,16 +61,9 @@ export default function ApplicationForm() {
         }))
       );
 
-      const { count, error: countError } = await supabase
-        .from('applicants')
-        .select('*', { count: 'exact', head: true });
-      if (countError) throw countError;
-
-      const applicantId = `APP-2026-${String((count ?? 0) + 1).padStart(4, '0')}`;
       const fullName = `${formData.firstName} ${formData.lastName}`.trim();
 
-      const { error: insertError } = await supabase.from('applicants').insert({
-        applicant_id: applicantId,
+      const applicantId = await submitApplicant(supabase, {
         name: fullName,
         first_name: formData.firstName.trim(),
         last_name: formData.lastName.trim(),
@@ -83,7 +80,6 @@ export default function ApplicationForm() {
         supporting_document_files: supportingDocumentFiles,
         status: 'Submitted',
       });
-      if (insertError) throw insertError;
 
       saveApplicationFiles(applicantId, {
         resumeFileName,
@@ -97,6 +93,7 @@ export default function ApplicationForm() {
     } catch (e: any) {
       setError(e.message);
     } finally {
+      submissionInProgress.current = false;
       setSubmitting(false);
     }
   };

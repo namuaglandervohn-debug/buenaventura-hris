@@ -368,9 +368,9 @@ export default function TrackApplicationPage() {
                         label="Enter Applicant ID"
                         value={applicantId}
                         onChange={(e) => setApplicantId(e.target.value)}
-                        placeholder="APP-2026-0001"
+                        placeholder="Paste your applicant ID"
                         required
-                        helperText="Format: APP-YYYY-XXXX (provided after submission)"
+                        helperText="Enter the complete applicant ID provided after submission."
                         sx={inputSx}
                         InputProps={{
                           startAdornment: (
@@ -713,7 +713,7 @@ export default function TrackApplicationPage() {
                       How to get your Applicant ID?
                     </Typography>
                     <Typography variant="caption" display="block" sx={{ color: '#657568', fontSize: 12.5, lineHeight: 1.7 }}>
-                      Your Applicant ID (format: APP-2026-XXXX) is given to you when you submit an application through the{' '}
+                      Your Applicant ID is given to you when you submit an application through the{' '}
                       <strong>Apply for a Job</strong> page. Make sure to save it.
                     </Typography>
                   </Box>

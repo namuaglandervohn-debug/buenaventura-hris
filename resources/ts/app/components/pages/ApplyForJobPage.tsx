@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import {
   Box,
@@ -50,6 +50,7 @@ import AuthBackground from '../AuthBackground';
 import { copyToClipboard } from '../../lib/copyToClipboard';
 import { saveApplicationFiles } from '../../lib/applicationFiles';
 import { supabase } from '../../lib/supabaseClient';
+import { submitApplicant } from '../../lib/submitApplicant';
 
 const CIVIL_STATUS = ['Single', 'Married', 'Widowed', 'Separated'];
 const GENDER = ['Male', 'Female', 'Prefer not to say'];
@@ -310,6 +311,7 @@ export default function ApplyForJobPage() {
   const [successDialog, setSuccessDialog] = useState(false);
   const [applicantId, setApplicantId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const submissionInProgress = useRef(false);
   const [error, setError] = useState('');
   const [emailNotice, setEmailNotice] = useState('');
   const [copied, setCopied] = useState(false);
@@ -822,15 +824,12 @@ export default function ApplyForJobPage() {
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null;
     if (submitter?.dataset.submitApplication !== 'true') return;
 
-    if (!validateAllSteps()) return;
+    if (submissionInProgress.current || !validateAllSteps()) return;
+    submissionInProgress.current = true;
     setSubmitting(true); setError(''); setEmailNotice('');
     try {
       const applicantEmail = formData.email.trim().toLowerCase();
 
-      const { count, error: countError } = await supabase.from('applicants').select('*', { count: 'exact', head: true });
-      if (countError) throw countError;
-      const nextNumber = ((count ?? 0) + 1).toString().padStart(4, '0');
-      const applicantIdGenerated = `APP-2026-${nextNumber}`;
       const resumeFileData = resumeFiles[0] ? await fileToBase64(resumeFiles[0]) : null;
       const supportingDocumentFiles = await Promise.all(supportingFiles.map(async (file) => ({ name: file.name, type: file.type, data: await fileToBase64(file) })));
       const birthplaceAddress = buildAddress(formData.birthplaceCountry, formData.birthplaceRegion, formData.birthplaceProvince, formData.birthplaceCity, formData.birthplaceBarangay, formData.birthplaceStreet, formData.birthplaceZipCode);
@@ -876,15 +875,14 @@ export default function ApplyForJobPage() {
         submittedDocuments: formData.submittedDocuments, otherDocument: formData.otherDocument, applicantSignature: formData.applicantSignature, declarationDate: formData.declarationDate,
       };
       const fullName = `${formData.firstName} ${formData.middleName} ${formData.lastName} ${formData.suffix}`.replace(/\s+/g, ' ').trim();
-      const { error: insertError } = await supabase.from('applicants').insert({
-        applicant_id: applicantIdGenerated, name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
+      const applicantIdGenerated = await submitApplicant(supabase, {
+        name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
         gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight,
         email: applicantEmail, phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
         tin: formData.tin, sss: formData.sss, philhealth: formData.philhealth, pagibig: formData.pagibig,
         emergency_contact: primaryEmergencyContact ? `${primaryEmergencyContact.name} - ${primaryEmergencyContact.relation} - ${primaryEmergencyContact.phone}` : null,
         resume_file_name: resumeFiles[0]?.name ?? null, resume_file_data: resumeFileData, supporting_documents: supportingFiles.map((file) => file.name), supporting_document_files: supportingDocumentFiles, status: 'Submitted',
       });
-      if (insertError) throw insertError;
 
       try {
         await sendApplicantIdEmail({
@@ -914,7 +912,7 @@ export default function ApplyForJobPage() {
         setFieldErrors((prev) => ({ ...prev, email: message }));
       }
       setError(message);
-    } finally { setSubmitting(false); }
+    } finally { submissionInProgress.current = false; setSubmitting(false); }
   };
 
   const handleFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
