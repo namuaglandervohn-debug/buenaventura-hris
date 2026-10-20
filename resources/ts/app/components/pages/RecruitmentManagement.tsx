@@ -1297,7 +1297,7 @@ export default function RecruitmentManagement() {
 
       const { data: linkedAccount, error: linkedAccountError } = await supabase.from('user_accounts').select('email').eq('employee_id', employeeId).maybeSingle();
       if (linkedAccountError) throw linkedAccountError;
-      let loginEmail = linkedAccount?.email || `${loginName}.${employeeId.toLowerCase()}@buenaventura-hris.me`;
+      let loginEmail = linkedAccount?.email || `${loginName}@buenaventura-hris.me`;
       const temporaryPassword = generateTemporaryPassword(loginName);
       const accountResult = await createOrResetHiredAccount({
         employeeId,
