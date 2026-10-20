@@ -22,7 +22,8 @@ const escapeHtml = (value) =>
 
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? '').trim());
 
-export default async function handler(request, response) {
+export async function handleApplicantEmail(request, response, { env = process.env, fetcher = fetch } = {}) {
+  response.setHeader('Cache-Control', 'no-store');
   if (request.method !== 'POST') {
     return json(response, 405, { message: 'Method not allowed.' });
   }
@@ -43,14 +44,16 @@ export default async function handler(request, response) {
     return json(response, 422, { message: 'Please enter a valid email address.' });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
+  const unavailable = () => json(response, 503, { sent: false, code: 'EMAIL_SERVICE_UNAVAILABLE', message: 'Confirmation email is temporarily unavailable. Your application remains saved; please keep your Applicant ID.' });
+  const apiKey = String(env.RESEND_API_KEY ?? '').trim();
   if (!apiKey) {
-    return json(response, 500, { message: 'Resend is not configured.' });
+    console.warn('Applicant email unavailable: RESEND_API_KEY is not configured.');
+    return unavailable();
   }
 
-  const appName = process.env.APP_NAME || 'Buenaventura HRIS';
-  const fromAddress = process.env.RESEND_FROM_ADDRESS || 'no-reply@buenaventura-hris.me';
-  const fromName = process.env.RESEND_FROM_NAME || appName;
+  const appName = env.APP_NAME || 'Buenaventura HRIS';
+  const fromAddress = env.RESEND_FROM_ADDRESS || 'no-reply@buenaventura-hris.me';
+  const fromName = env.RESEND_FROM_NAME || appName;
   const trackingNote = 'Please keep this Applicant ID. You can use it to track your application status in the applicant portal.';
   const safeName = escapeHtml(applicantName);
   const safePosition = escapeHtml(position);
@@ -82,31 +85,37 @@ export default async function handler(request, response) {
 </body>
 </html>`;
 
-  const resendResponse = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      from: `${fromName} <${fromAddress}>`,
-      to: [email],
-      subject: `Your ${appName} Applicant ID`,
-      html,
-      text: `Hello ${applicantName},\n\nYour Applicant ID is ${applicantId}.`
-        + (position ? `\nPosition Applied For: ${position}` : '')
-        + `\n\n${trackingNote}\n\n${appName}`,
-    }),
-  });
-
-  const result = await resendResponse.json().catch(() => null);
-  if (!resendResponse.ok) {
-    return json(response, 502, {
-      message: result?.message || 'Unable to send applicant ID email.',
-      resend_status: resendResponse.status,
+  try {
+    const resendResponse = await fetcher('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        from: `${fromName} <${fromAddress}>`,
+        to: [email],
+        subject: `Your ${appName} Applicant ID`,
+        html,
+        text: `Hello ${applicantName},\n\nYour Applicant ID is ${applicantId}.`
+          + (position ? `\nPosition Applied For: ${position}` : '')
+          + `\n\n${trackingNote}\n\n${appName}`,
+      }),
+      signal: AbortSignal.timeout(10000),
     });
-  }
 
-  return json(response, 200, { message: 'Applicant ID email sent.', resend: result });
+    const result = await resendResponse.json().catch(() => null);
+    if (!resendResponse.ok || !result?.id) {
+      console.warn('Applicant email rejected by provider:', { status: resendResponse.status, code: result?.name });
+      return unavailable();
+    }
+
+    return json(response, 200, { sent: true, message: 'Applicant ID email sent.' });
+  } catch {
+    console.warn('Applicant email provider request failed or timed out.');
+    return unavailable();
+  }
 }
+
+export default function handler(request, response) { return handleApplicantEmail(request, response); }

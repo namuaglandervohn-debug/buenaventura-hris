@@ -20,6 +20,8 @@ return [
 
     'resend' => [
         'key' => env('RESEND_API_KEY'),
+        'from_address' => env('RESEND_FROM_ADDRESS', env('MAIL_FROM_ADDRESS', 'no-reply@buenaventura-hris.me')),
+        'from_name' => env('RESEND_FROM_NAME', env('MAIL_FROM_NAME', env('APP_NAME', 'Buenaventura HRIS'))),
     ],
 
     'supabase' => [

@@ -50,7 +50,7 @@ import AuthBackground from '../AuthBackground';
 import { copyToClipboard } from '../../lib/copyToClipboard';
 import { saveApplicationFiles } from '../../lib/applicationFiles';
 import { supabase } from '../../lib/supabaseClient';
-import { submitApplicant } from '../../lib/submitApplicant';
+import { submitApplicantWithConfirmation, sendApplicantConfirmation } from '../../lib/submitApplicantWithConfirmation';
 
 const CIVIL_STATUS = ['Single', 'Married', 'Widowed', 'Separated'];
 const GENDER = ['Male', 'Female', 'Prefer not to say'];
@@ -314,6 +314,7 @@ export default function ApplyForJobPage() {
   const submissionInProgress = useRef(false);
   const [error, setError] = useState('');
   const [emailNotice, setEmailNotice] = useState('');
+  const [emailPending, setEmailPending] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
@@ -798,27 +799,6 @@ export default function ApplyForJobPage() {
     return true;
   };
 
-  const sendApplicantIdEmail = async (payload: { applicantId: string; email: string; name: string; position: string }) => {
-    const response = await fetch('/api/applications/send-applicant-id-email', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        applicant_id: payload.applicantId,
-        email: payload.email,
-        name: payload.name,
-        position: payload.position,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new Error(body?.message || 'Unable to send applicant ID email.');
-    }
-  };
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null;
@@ -826,7 +806,7 @@ export default function ApplyForJobPage() {
 
     if (submissionInProgress.current || !validateAllSteps()) return;
     submissionInProgress.current = true;
-    setSubmitting(true); setError(''); setEmailNotice('');
+    setSubmitting(true); setError(''); setEmailNotice(''); setEmailPending(false);
     try {
       const applicantEmail = formData.email.trim().toLowerCase();
 
@@ -875,36 +855,39 @@ export default function ApplyForJobPage() {
         submittedDocuments: formData.submittedDocuments, otherDocument: formData.otherDocument, applicantSignature: formData.applicantSignature, declarationDate: formData.declarationDate,
       };
       const fullName = `${formData.firstName} ${formData.middleName} ${formData.lastName} ${formData.suffix}`.replace(/\s+/g, ' ').trim();
-      const applicantIdGenerated = await submitApplicant(supabase, {
+      const { emailNotice: confirmationNotice } = await submitApplicantWithConfirmation(supabase, {
         name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
         gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight,
         email: applicantEmail, phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
         tin: formData.tin, sss: formData.sss, philhealth: formData.philhealth, pagibig: formData.pagibig,
         emergency_contact: primaryEmergencyContact ? `${primaryEmergencyContact.name} - ${primaryEmergencyContact.relation} - ${primaryEmergencyContact.phone}` : null,
         resume_file_name: resumeFiles[0]?.name ?? null, resume_file_data: resumeFileData, supporting_documents: supportingFiles.map((file) => file.name), supporting_document_files: supportingDocumentFiles, status: 'Submitted',
-      });
-
-      try {
-        await sendApplicantIdEmail({
-          applicantId: applicantIdGenerated,
+      }, {
+        onSaved: (id) => {
+          saveApplicationFiles(id, { resumeFileName: resumeFiles[0]?.name ?? null, resumeFileData, supportingDocuments: supportingFiles.map((file) => file.name), supportingDocumentFiles });
+          setApplicantId(id);
+          setEmailPending(true);
+          setSuccessDialog(true);
+        },
+        sendConfirmation: (id) => sendApplicantConfirmation({
+          applicantId: id,
           email: applicantEmail,
           name: fullName,
           position: formData.position,
-        });
-      } catch (emailError: any) {
-        console.warn('Applicant ID email failed:', emailError);
-        await supabase.from('applicants').delete().eq('applicant_id', applicantIdGenerated);
-        throw new Error(emailError?.message || 'Applicant ID could not be sent. Please try again later.');
+        }),
+      });
+      setEmailNotice(confirmationNotice);
+      setEmailPending(false);
+
+      try {
+        const { error: notificationError } = await supabase.from('notifications').insert([
+          { recipient_role: 'hr', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
+          { recipient_role: 'gm', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
+        ]);
+        if (notificationError) console.warn('Notification insert failed:', notificationError.message);
+      } catch (notificationError) {
+        console.warn('Application saved; staff notification failed:', notificationError);
       }
-
-      saveApplicationFiles(applicantIdGenerated, { resumeFileName: resumeFiles[0]?.name ?? null, resumeFileData, supportingDocuments: supportingFiles.map((file) => file.name), supportingDocumentFiles });
-      const { error: notificationError } = await supabase.from('notifications').insert([
-        { recipient_role: 'hr', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
-        { recipient_role: 'gm', title: 'New Application Submitted', message: `${formData.firstName} ${formData.lastName} submitted a new application for ${formData.position}.`, type: 'application' },
-      ]);
-      if (notificationError) console.warn('Notification insert failed:', notificationError.message);
-
-      setApplicantId(applicantIdGenerated); setSuccessDialog(true);
     } catch (err: any) {
       const message = err.message || 'Something went wrong while submitting the application.';
       if (message.toLowerCase().includes('email')) {
@@ -933,6 +916,7 @@ export default function ApplyForJobPage() {
     setFormData(EMPTY);
     setFieldErrors({});
     setEmailNotice('');
+    setEmailPending(false);
     setResumeFiles([]);
     setSupportingFiles([]);
     setCharacterReferences([{ ...EMPTY_CHARACTER_REFERENCE }]);
@@ -1450,7 +1434,7 @@ export default function ApplyForJobPage() {
       </Box>
 
       <Dialog open={successDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: '26px', border: '1px solid rgba(22,101,52,0.12)', boxShadow: '0 28px 80px rgba(15,23,42,0.18)' } }}>
-        <DialogContent sx={{ textAlign: 'center', p: { xs: 2.5, sm: 4 } }}><Box sx={{ width: { xs: 68, sm: 78 }, height: { xs: 68, sm: 78 }, borderRadius: '22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', mb: 2, background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', color: '#166534', boxShadow: '0 16px 34px rgba(22,101,52,0.18)' }}><VerifiedUserOutlined sx={{ fontSize: { xs: 42, sm: 50 } }} /></Box><Typography variant="h5" fontWeight={700} gutterBottom>Application Submitted Successfully</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Please save your Applicant ID. You will use this to track your application status. A copy will be sent to your email address.</Typography><Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: 'rgba(31,122,71,0.08)', border: '1px solid rgba(31,122,71,0.18)', mb: 2 }}><Typography variant="h6" fontWeight={700} color="primary" sx={{ overflowWrap: 'anywhere' }}>{applicantId}</Typography></Paper>{emailNotice && <Alert severity="warning" sx={{ mb: 2, textAlign: 'left' }}>{emailNotice}</Alert>}{copied && <Alert severity="success" sx={{ mb: 2 }}>Applicant ID copied!</Alert>}{copyFailed && <Alert severity="error" sx={{ mb: 2 }}>Unable to copy Applicant ID.</Alert>}</DialogContent>
+        <DialogContent sx={{ textAlign: 'center', p: { xs: 2.5, sm: 4 } }}><Box sx={{ width: { xs: 68, sm: 78 }, height: { xs: 68, sm: 78 }, borderRadius: '22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', mb: 2, background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', color: '#166534', boxShadow: '0 16px 34px rgba(22,101,52,0.18)' }}><VerifiedUserOutlined sx={{ fontSize: { xs: 42, sm: 50 } }} /></Box><Typography variant="h5" fontWeight={700} gutterBottom>Application Submitted Successfully</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Please save your Applicant ID. You will use this to track your application status.</Typography><Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: 'rgba(31,122,71,0.08)', border: '1px solid rgba(31,122,71,0.18)', mb: 2 }}><Typography variant="h6" fontWeight={700} color="primary" sx={{ overflowWrap: 'anywhere' }}>{applicantId}</Typography></Paper>{emailPending && <Alert severity="info" sx={{ mb: 2 }}>Your application is saved. Sending your confirmation email…</Alert>}{!emailPending && !emailNotice && <Alert severity="success" sx={{ mb: 2 }}>A copy of your Applicant ID was sent to your email address.</Alert>}{emailNotice && <Alert severity="warning" sx={{ mb: 2, textAlign: 'left' }}>{emailNotice}</Alert>}{copied && <Alert severity="success" sx={{ mb: 2 }}>Applicant ID copied!</Alert>}{copyFailed && <Alert severity="error" sx={{ mb: 2 }}>Unable to copy Applicant ID.</Alert>}</DialogContent>
         <DialogActions sx={{ p: { xs: 2, sm: 3 }, justifyContent: 'center', gap: 1, flexWrap: 'wrap' }}><Button variant="outlined" startIcon={<ContentCopy />} onClick={handleCopyId} sx={{ ...softButtonSx, borderColor: '#166534', color: '#166534', background: '#ffffff', width: { xs: '100%', sm: 'auto' } }}>Copy Applicant ID</Button><Button variant="contained" onClick={() => navigate('/track')} sx={{ ...softButtonSx, background: 'linear-gradient(135deg, #1F7A47 0%, #3FA46A 100%)', width: { xs: '100%', sm: 'auto' } }}>Track Application</Button><Button onClick={handleCloseDialog} sx={{ ...softButtonSx, width: { xs: '100%', sm: 'auto' } }}>Close</Button></DialogActions>
       </Dialog>
     </AuthBackground>

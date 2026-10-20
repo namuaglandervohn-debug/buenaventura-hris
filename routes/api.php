@@ -480,19 +480,24 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
     ]);
     $data['email'] = validateRecipientEmailAddress($data['email']);
 
-    $apiKey = config('services.resend.key');
+    $unavailable = fn () => response()->json([
+        'sent' => false,
+        'code' => 'EMAIL_SERVICE_UNAVAILABLE',
+        'message' => 'Confirmation email is temporarily unavailable. Your application remains saved; please keep your Applicant ID.',
+    ], 503);
+    $apiKey = trim((string) config('services.resend.key'));
     if (! $apiKey) {
         Log::warning('Applicant ID email skipped: RESEND_API_KEY is not configured.', [
             'applicant_id' => $data['applicant_id'],
             'email' => $data['email'],
         ]);
 
-        return response()->json(['message' => 'Resend is not configured.'], 500);
+        return $unavailable();
     }
 
     $appName = config('app.name', 'Buenaventura HRIS');
-    $fromAddress = env('RESEND_FROM_ADDRESS', config('mail.from.address'));
-    $fromName = env('RESEND_FROM_NAME', config('mail.from.name', $appName));
+    $fromAddress = config('services.resend.from_address', config('mail.from.address'));
+    $fromName = config('services.resend.from_name', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);
     $applicantName = trim($data['name'] ?? '') ?: 'Applicant';
     $position = trim($data['position'] ?? '');
@@ -507,20 +512,26 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
         'trackingNote' => $trackingNote,
     ])->render();
 
-    $response = Http::withToken($apiKey)
-        ->acceptJson()
-        ->asJson()
-        ->post('https://api.resend.com/emails', [
-            'from' => $from,
-            'to' => [$data['email']],
-            'subject' => $subject,
-            'html' => $html,
-            'text' => "Hello {$applicantName},\n\nYour Applicant ID is {$data['applicant_id']}."
-                . ($position ? "\nPosition Applied For: {$position}" : '')
-                . "\n\n{$trackingNote}\n\n{$appName}",
-        ]);
+    try {
+        $response = Http::withToken($apiKey)
+            ->timeout(10)
+            ->acceptJson()
+            ->asJson()
+            ->post('https://api.resend.com/emails', [
+                'from' => $from,
+                'to' => [$data['email']],
+                'subject' => $subject,
+                'html' => $html,
+                'text' => "Hello {$applicantName},\n\nYour Applicant ID is {$data['applicant_id']}."
+                    . ($position ? "\nPosition Applied For: {$position}" : '')
+                    . "\n\n{$trackingNote}\n\n{$appName}",
+            ]);
+    } catch (\Illuminate\Http\Client\ConnectionException $exception) {
+        Log::warning('Applicant ID email provider connection failed.');
+        return $unavailable();
+    }
 
-    if ($response->failed()) {
+    if ($response->failed() || ! $response->json('id')) {
         $responseBody = $response->json() ?? $response->body();
         Log::warning('Applicant ID email failed via Resend.', [
             'applicant_id' => $data['applicant_id'],
@@ -529,14 +540,11 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
             'body' => $responseBody,
         ]);
 
-        return response()->json(resendFailurePayload(
-            $responseBody,
-            $response->status(),
-            'Applicant ID could not be sent.'
-        ), 502);
+        return $unavailable();
     }
 
     return response()->json([
+        'sent' => true,
         'message' => 'Applicant ID email sent.',
         'resend' => $response->json(),
     ]);
