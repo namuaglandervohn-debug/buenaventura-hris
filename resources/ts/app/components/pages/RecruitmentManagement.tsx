@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { loadApplicationFiles } from '../../lib/applicationFiles';
-import { apiErrorMessage } from '../../lib/apiError';
+import { apiErrorMessage, readableErrorMessage } from '../../lib/apiError';
+import { sendApplicationStatusEmail } from '../../lib/sendApplicationStatusEmail';
 import {
   Sync,
   CalendarMonth,
@@ -819,7 +820,7 @@ export default function RecruitmentManagement() {
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
-    severity: 'success' as 'success' | 'error',
+    severity: 'success' as 'success' | 'error' | 'warning',
   });
   const [profileLoading, setProfileLoading] = useState(false);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -945,13 +946,7 @@ export default function RecruitmentManagement() {
   const sendApplicantStatusEmail = async (app: Application, status: AppStatus, overrides: Partial<Application> = {}) => {
     if (!app.email) return;
 
-    const response = await fetch('/api/applications/send-status-email', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
+    await sendApplicationStatusEmail({
         applicant_id: app.id,
         email: app.email,
         name: buildApplicantFullName({ ...app, ...overrides }),
@@ -961,15 +956,7 @@ export default function RecruitmentManagement() {
         interview_date: overrides.interviewDate ?? app.interviewDate ?? '',
         interview_time: overrides.interviewTime ?? app.interviewTime ?? '',
         interview_location: overrides.interviewLocation ?? app.interviewLocation ?? '',
-      }),
     });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      const resendDetail = body?.resend_message || body?.resend_error || body?.error;
-      const resendStatus = body?.resend_status ? `Resend ${body.resend_status}: ` : '';
-      throw new Error(`${resendStatus}${resendDetail || body?.message || 'Unable to send application status email.'}`);
-    }
   };
 
   const updateApplicantRecord = async (
@@ -977,7 +964,7 @@ export default function RecruitmentManagement() {
     dbUpdate: Record<string, any>,
     localUpdate: Partial<Application>,
     message: string,
-    options?: { notifyStatus?: AppStatus }
+    options?: { notifyStatus?: AppStatus; emailOverrides?: Partial<Application> }
   ) => {
     setSaving(true);
 
@@ -1005,13 +992,13 @@ export default function RecruitmentManagement() {
 
       if (options?.notifyStatus && previousApp?.email) {
         try {
-          await sendApplicantStatusEmail(previousApp, options.notifyStatus, localUpdate);
+          await sendApplicantStatusEmail(previousApp, options.notifyStatus, { ...localUpdate, ...options.emailOverrides });
           setSnackbar({ open: true, message: `${message} Applicant was notified by email.`, severity: 'success' });
         } catch (emailError: any) {
           setSnackbar({
             open: true,
-            message: `${message} Email notification failed: ${emailError.message ?? emailError}`,
-            severity: 'error',
+            message: `${message} Email notification failed: ${readableErrorMessage(emailError, 'The email service is temporarily unavailable.')}`,
+            severity: 'warning',
           });
         }
       } else {
@@ -1083,9 +1070,9 @@ export default function RecruitmentManagement() {
     await updateApplicantRecord(
       id,
       applicationToApplicantUpdate(localUpdate),
-      { ...localUpdate, requirementsNote: buildRequirementsStatusNote(newStatus) },
+      localUpdate,
       'Requirements checklist saved!',
-      { notifyStatus: newStatus }
+      { notifyStatus: newStatus, emailOverrides: { requirementsNote: buildRequirementsStatusNote(newStatus) } }
     );
   };
 

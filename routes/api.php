@@ -557,14 +557,14 @@ Route::post('/applications/send-status-email', function (Request $request) {
         'name' => ['nullable', 'string', 'max:160'],
         'position' => ['nullable', 'string', 'max:160'],
         'status' => ['required', 'string', 'max:80'],
-        'note' => ['nullable', 'string', 'max:1000'],
+        'note' => ['nullable', 'string', 'max:10000'],
         'interview_date' => ['nullable', 'string', 'max:40'],
         'interview_time' => ['nullable', 'string', 'max:40'],
         'interview_location' => ['nullable', 'string', 'max:200'],
     ]);
     $data['email'] = validateRecipientEmailAddress($data['email']);
 
-    $apiKey = config('services.resend.key');
+    $apiKey = trim((string) config('services.resend.key'));
     if (! $apiKey) {
         Log::warning('Application status email skipped: RESEND_API_KEY is not configured.', [
             'applicant_id' => $data['applicant_id'],
@@ -576,8 +576,8 @@ Route::post('/applications/send-status-email', function (Request $request) {
     }
 
     $appName = config('app.name', 'Buenaventura HRIS');
-    $fromAddress = env('RESEND_FROM_ADDRESS', config('mail.from.address'));
-    $fromName = env('RESEND_FROM_NAME', config('mail.from.name', $appName));
+    $fromAddress = config('services.resend.from_address', config('mail.from.address'));
+    $fromName = config('services.resend.from_name', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);
     $applicantName = trim($data['name'] ?? '') ?: 'Applicant';
     $position = trim($data['position'] ?? '');
@@ -606,20 +606,26 @@ Route::post('/applications/send-status-email', function (Request $request) {
     if ($interviewLocation) $details[] = "Location: {$interviewLocation}";
     if ($note) $details[] = "Note: {$note}";
 
-    $response = Http::withToken($apiKey)
-        ->acceptJson()
-        ->asJson()
-        ->post('https://api.resend.com/emails', [
-            'from' => $from,
-            'to' => [$data['email']],
-            'subject' => "Application/requirements status update: {$status}",
-            'html' => $html,
-            'text' => "Hello {$applicantName},\n\nApplicant ID: {$data['applicant_id']}\nYour application/requirements status is now: {$status}."
-                . ($details ? "\n".implode("\n", $details) : '')
-                . "\n\nWe will email you whenever your application status changes.\n\n{$appName}",
-        ]);
+    try {
+        $response = Http::withToken($apiKey)
+            ->timeout(10)
+            ->acceptJson()
+            ->asJson()
+            ->post('https://api.resend.com/emails', [
+                'from' => $from,
+                'to' => [$data['email']],
+                'subject' => "Application/requirements status update: {$status}",
+                'html' => $html,
+                'text' => "Hello {$applicantName},\n\nApplicant ID: {$data['applicant_id']}\nYour application/requirements status is now: {$status}."
+                    . ($details ? "\n".implode("\n", $details) : '')
+                    . "\n\nWe will email you whenever your application status changes.\n\n{$appName}",
+            ]);
 
-    if ($response->failed()) {
+    } catch (\Illuminate\Http\Client\ConnectionException $exception) {
+        return response()->json(['sent' => false, 'message' => 'The status email service could not be reached. Your saved checklist is unchanged.'], 503);
+    }
+
+    if ($response->failed() || ! $response->json('id')) {
         $responseBody = $response->json() ?? $response->body();
         Log::warning('Application status email failed via Resend.', [
             'applicant_id' => $data['applicant_id'],
@@ -637,6 +643,7 @@ Route::post('/applications/send-status-email', function (Request $request) {
     }
 
     return response()->json([
+        'sent' => true,
         'message' => 'Application status email sent.',
         'resend' => $response->json(),
     ]);

@@ -53,4 +53,19 @@ class ApplicantEmailTest extends TestCase
         Http::fake(fn () => throw new ConnectionException('Provider unavailable'));
         $this->postJson('/api/applications/send-applicant-id-email', $this->payload())->assertStatus(503)->assertJsonPath('sent', false);
     }
+
+    public function test_requirements_status_email_accepts_checklist_summary_and_confirms_sending(): void
+    {
+        Http::fake(['api.resend.com/*' => Http::response(['id' => 'status-mail-id'])]);
+        $this->postJson('/api/applications/send-status-email', array_merge($this->payload(), ['status' => 'Under Review', 'note' => str_repeat('Requirements detail. ', 80)]))
+            ->assertOk()->assertJsonPath('sent', true);
+        Http::assertSent(fn (Request $request) => $request->hasHeader('Authorization', 'Bearer test-key') && $request['from'] === 'HRIS <sender@example.com>' && str_contains($request['text'], 'Under Review'));
+    }
+
+    public function test_status_email_connection_failure_preserves_the_saved_checklist(): void
+    {
+        Http::fake(fn () => throw new ConnectionException('Provider unavailable'));
+        $this->postJson('/api/applications/send-status-email', array_merge($this->payload(), ['status' => 'Missing Requirements']))
+            ->assertStatus(503)->assertJsonPath('sent', false);
+    }
 }
