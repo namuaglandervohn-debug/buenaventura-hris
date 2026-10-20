@@ -67,6 +67,7 @@ import { useAuth } from '../../context/AuthContext';
 import ActionSnackbar from '../ActionSnackbar';
 import { nextEmployeeId } from '../../lib/employeeIds';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { readResumeFile } from '../../lib/resumeTextExtraction';
 
 interface DocFile {
   name: string;
@@ -760,48 +761,6 @@ const buildSmsMessage = (app: Application, status: AppStatus = app.status) => {
   return `Good day ${applicantName}. Your application status is ${status}. Please keep your Applicant ID ${app.id} for tracking.`;
 };
 
-const readFileAsText = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = reject;
-    reader.readAsText(file);
-  });
-
-const readFileAsArrayBuffer = (file: File) =>
-  new Promise<ArrayBuffer>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
-  });
-
-const extractPdfTextFromFile = async (file: File) => {
-  const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-
-  const pdf = await pdfjs.getDocument({ data: await readFileAsArrayBuffer(file) }).promise;
-  const pageTexts: string[] = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = content.items
-      .map((item: any) => ('str' in item ? item.str : ''))
-      .filter(Boolean)
-      .join(' ');
-    pageTexts.push(text);
-  }
-
-  return pageTexts.join('\n\n').trim();
-};
-
-const extractDocxTextFromFile = async (file: File) => {
-  const mammoth = await import('mammoth');
-  const result = await mammoth.extractRawText({ arrayBuffer: await readFileAsArrayBuffer(file) });
-  return String(result.value ?? '').trim();
-};
-
 export default function RecruitmentManagement() {
   const { user } = useAuth();
   const [applications, setApplications] = useState<Application[]>([]);
@@ -831,6 +790,15 @@ export default function RecruitmentManagement() {
   const [resumeScanResult, setResumeScanResult] = useState<Partial<Application> | null>(null);
   const [resumeScanFileName, setResumeScanFileName] = useState('');
   const [resumeScanLoading, setResumeScanLoading] = useState(false);
+  const [resumeScanProgress, setResumeScanProgress] = useState('');
+  const resumeScanController = useRef<AbortController | null>(null);
+  const closeResumeScanner = () => {
+    resumeScanController.current?.abort();
+    resumeScanController.current = null;
+    setResumeScanLoading(false);
+    setResumeScanProgress('');
+    setResumeScannerOpen(false);
+  };
 
   // Interview scheduling form
   const [iForm, setIForm] = useState({
@@ -940,6 +908,7 @@ export default function RecruitmentManagement() {
 
     return () => {
       isMountedRef.current = false;
+      resumeScanController.current?.abort();
     };
   }, [fetchApplications]);
 
@@ -1656,30 +1625,22 @@ export default function RecruitmentManagement() {
   const handleResumeScanFile = async (file?: File | null) => {
     if (!file) return;
 
+    resumeScanController.current?.abort();
+    const controller = new AbortController();
+    resumeScanController.current = controller;
+    setResumeScanText('');
+    setResumeScanProgress('Reading resume...');
     setResumeScanFileName(file.name);
     setResumeScanResult(null);
     setResumeScanLoading(true);
 
     try {
-      const lowerName = file.name.toLowerCase();
-      const extractedText = lowerName.endsWith('.pdf') || file.type === 'application/pdf'
-        ? await extractPdfTextFromFile(file)
-        : lowerName.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          ? await extractDocxTextFromFile(file)
-        : file.type.startsWith('text/') || /\.(txt|csv)$/i.test(lowerName)
-          ? await readFileAsText(file)
-          : '';
-
+      const extractedText = await readResumeFile(file, pdfWorkerUrl, message => {
+        if (!controller.signal.aborted) setResumeScanProgress(message);
+      }, controller.signal);
+      if (controller.signal.aborted) return;
       if (!extractedText.trim()) {
-        setResumeScanText('');
-        setSnackbar({
-          open: true,
-          message: file.type.startsWith('image/')
-            ? 'Image uploaded. Browser OCR is not available yet, so paste the extracted text or upload a PDF/DOCX resume.'
-            : 'Could not extract text from this file. Try a text-based PDF, a DOCX file, or paste the resume text manually.',
-          severity: 'error',
-        });
-        return;
+        throw new Error('No readable text was found. Try a clearer scan or photo, or paste the resume text manually.');
       }
 
       const parsed = extractResumeFields(extractedText);
@@ -1687,13 +1648,17 @@ export default function RecruitmentManagement() {
       setResumeScanResult(parsed);
       setSnackbar({ open: true, message: 'Resume text extracted and parsed.', severity: 'success' });
     } catch (error: any) {
+      if (controller.signal.aborted) return;
       setSnackbar({
         open: true,
         message: `Could not read resume file: ${error?.message ?? error}`,
         severity: 'error',
       });
     } finally {
-      setResumeScanLoading(false);
+      if (isMountedRef.current && resumeScanController.current === controller) {
+        setResumeScanLoading(false);
+        setResumeScanProgress('');
+      }
     }
   };
 
@@ -3269,7 +3234,7 @@ export default function RecruitmentManagement() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={resumeScannerOpen} onClose={() => setResumeScannerOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: dialogPaperSx }}>
+      <Dialog open={resumeScannerOpen} onClose={closeResumeScanner} maxWidth="md" fullWidth PaperProps={{ sx: dialogPaperSx }}>
         <DialogTitle fontWeight={700} sx={dialogTitleSx}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <ContentPasteSearch /> Resume / Biodata Scanner
@@ -3277,7 +3242,7 @@ export default function RecruitmentManagement() {
         </DialogTitle>
         <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: '#fbfff9' }}>
           <Alert severity="info" sx={{ mb: 2, borderRadius: '16px' }}>
-            Upload a text-based PDF or DOCX resume to extract details automatically. Image resumes still need OCR text pasted from the device/scanner.
+            Upload a PDF, DOCX, or resume photo to extract details automatically. Scanned PDFs and images use text recognition on your device. Review the detected fields before saving.
           </Alert>
           <Grid container spacing={2}>
             <Grid size={12}>
@@ -3301,6 +3266,10 @@ export default function RecruitmentManagement() {
                 />
               </Button>
               {resumeScanFileName && <Chip label={resumeScanFileName} size="small" sx={{ ml: 1, fontWeight: 600 }} />}
+              {resumeScanLoading && <Box role="status" aria-live="polite" sx={{ mt: 1.5 }}>
+                <Typography variant="body2" sx={{ mb: 1 }}>{resumeScanProgress}</Typography>
+                <LinearProgress />
+              </Box>}
             </Grid>
             <Grid size={{ xs: 12, md: 7 }}>
               <TextField
@@ -3338,12 +3307,12 @@ export default function RecruitmentManagement() {
           </Grid>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${GREEN_UI.border}`, bgcolor: '#ffffff' }}>
-          <Button onClick={() => setResumeScannerOpen(false)} sx={pillButtonSx}>Close</Button>
+          <Button onClick={closeResumeScanner} sx={pillButtonSx}>{resumeScanLoading ? 'Cancel Scan' : 'Close'}</Button>
           <Button
             variant="contained"
             startIcon={<AutoAwesome />}
             onClick={() => setResumeScanResult(extractResumeFields(resumeScanText))}
-            disabled={!resumeScanText.trim()}
+            disabled={resumeScanLoading || !resumeScanText.trim()}
             sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
           >
             Auto Fill Details
@@ -3353,7 +3322,7 @@ export default function RecruitmentManagement() {
               variant="contained"
               startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <TaskAlt />}
               onClick={saveResumeScanToSelectedApplicant}
-              disabled={!resumeScanResult || saving}
+              disabled={resumeScanLoading || !resumeScanResult || saving}
               sx={{ ...pillButtonSx, bgcolor: GREEN_UI.greenDark, '&:hover': { bgcolor: '#145c35' } }}
             >
               Save to Open Applicant
