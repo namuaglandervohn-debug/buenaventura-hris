@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Resume scanner verification</title></head>
+<body style="font:16px Arial;background:#f2fbf4;padding:30px;color:#174f2f"><main style="max-width:850px;margin:auto;background:white;border:1px solid #cee5d1;border-radius:24px;padding:28px">
+<h1>Resume text recognition</h1><p>Verification with a generated sample resume.</p><button id="pdf">Scan image-only PDF</button> <button id="image">Scan resume photo</button> <button id="cancel">Cancel</button><p role="status" id="status">Ready</p><pre id="result" style="white-space:pre-wrap;background:#f5fbf5;padding:20px;border-radius:12px"></pre></main>
+<script type="module">
+import { readResumeFile } from '/resources/ts/app/lib/resumeTextExtraction.ts';
+import pdfWorkerUrl from '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs?url';
+let controller;
+async function scan(ext,type){
+  controller?.abort();controller=new AbortController();
+  document.querySelector('#result').textContent='';
+  try{
+    const bytes=await (await fetch('/tmp/scanner-fixture.'+ext)).blob();
+    const text=await readResumeFile(new File([bytes],'sample.'+ext,{type}),pdfWorkerUrl,message=>document.querySelector('#status').textContent=message,controller.signal);
+    document.querySelector('#result').textContent=text;
+    document.querySelector('#status').textContent=text.includes('jane.sample@example.com')?'Passed: resume text recognized':'Failed: expected email missing';
+  }catch(e){document.querySelector('#status').textContent='Error: '+e.message;}
+}
+document.querySelector('#pdf').onclick=()=>scan('pdf','application/pdf');
+document.querySelector('#image').onclick=()=>scan('png','image/png');
+document.querySelector('#cancel').onclick=()=>controller?.abort();
+</script></body></html>
