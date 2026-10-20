@@ -1,8 +1,9 @@
+import { renderApplicationStatusEmail } from '../../lib/emails/application-status.js';
+
 const sendJson = (response, status, body) => {
   response.status(status).setHeader('Content-Type', 'application/json');
   response.end(JSON.stringify(body));
 };
-const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]);
 const STATUSES = ['Submitted', 'Under Review', 'Missing Requirements', 'For Interview', 'Hired', 'Not Qualified', 'Archived'];
 
 export async function handleStatusEmail(request, response, { env = process.env, fetcher = fetch } = {}) {
@@ -43,20 +44,7 @@ export async function handleStatusEmail(request, response, { env = process.env, 
     data.interview_location && `Location: ${data.interview_location}`,
     data.note && `Note: ${data.note}`,
   ].filter(Boolean);
-  const terminal = ['Not Qualified', 'Archived'].includes(data.status);
-  const flow = terminal ? [...STATUSES.slice(0, 3), data.status] : STATUSES.slice(0, 5);
-  const current = flow.indexOf(data.status);
-  const steps = flow.map((step, index) => `<li style="padding:8px;color:${index <= current ? '#14532d' : '#7b8780'}"><strong>${escapeHtml(step)}</strong> — ${index === current ? 'Now' : index < current ? 'Done' : 'Next'}</li>`).join('');
-  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Application Status Update</title></head>
-<body style="margin:0;background:#f2fbf4;font-family:Arial,Helvetica,sans-serif;color:#1f2d24">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="24"><tr><td align="center">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:white;border:1px solid #d6ebd8;border-radius:18px">
-<tr><td style="padding:26px;background:#21a957;color:white"><h1 style="font-size:24px;margin:0">Application / Requirements Status Update</h1><p>${escapeHtml(appName)}</p></td></tr>
-<tr><td style="padding:26px"><p>Hello ${escapeHtml(name)},</p><p>Your application${data.position ? ` for ${escapeHtml(data.position)}` : ''} has a new status update.</p>
-<p><strong>Applicant ID:</strong> ${escapeHtml(data.applicant_id)}</p><p><strong>Current status:</strong> ${escapeHtml(data.status)}</p><ol>${steps}</ol>
-${details.length ? `<div style="background:#f7fbf5;border:1px solid #dcefe0;border-radius:12px;padding:16px;line-height:1.65">${details.map((detail) => escapeHtml(detail).replace(/\n/g, '<br>')).join('<br>')}</div>` : ''}
-<p>Please keep your Applicant ID. You can track your requirements and application status in the portal.</p></td></tr>
-<tr><td style="padding:16px 26px;border-top:1px solid #e2efe2;color:#6c7d70;font-size:12px">This is an automated message from ${escapeHtml(appName)}.</td></tr></table></td></tr></table></body></html>`;
+  const html = renderApplicationStatusEmail(data, appName);
   try {
     const result = await fetcher('https://api.resend.com/emails', {
       method: 'POST',
