@@ -17,6 +17,8 @@ Run account and session regression checks with `node --test tests/*.test.mjs`.
 
 Applicant confirmation emails require a valid `RESEND_API_KEY` and a verified `RESEND_FROM_ADDRESS` in the server hosting environment. A send-only Resend key is sufficient; a denied domains-list request with `restricted_api_key` does not mean the email key is invalid. After changing Laravel environment variables, refresh cached configuration with `php artisan config:clear`; on Vercel, update the environment and redeploy. Email failures preserve saved applications and show the tracking ID with a delivery notice. Never put an email-provider key in a `VITE_` variable.
 
+Applicant IDs use `APP-YYYY-0001` numbering, continuing after the highest numeric ID for the current year. Gaps from deleted records and previously issued random IDs do not change the next number. Concurrent submissions rely on the database unique constraint and retry with the latest number; existing tracking IDs are preserved.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:

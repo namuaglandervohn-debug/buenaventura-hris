@@ -9,6 +9,8 @@ const fakeDatabase = (error = null) => {
   return { rows, from(table) {
     assert.equal(table, 'applicants');
     return {
+      select() { return this; }, like() { return this; }, order() { return this; },
+      async range() { return { data: rows.map((row) => ({ applicant_id: row.applicant_id })), error: null }; },
       async insert(row) { if (!error) rows.push(row); return { error }; },
       delete() { assert.fail('Email failure must never delete an application'); },
     };
