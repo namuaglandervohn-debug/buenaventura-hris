@@ -1452,7 +1452,6 @@ export default function RequestManagement() {
         borderRadius: { xs: 0, md: '32px' },
       }}
     >
-      {isHR && <Box sx={{ mb: 2, textAlign: 'right' }}><Button variant="outlined" onClick={() => setLeaveUtilityOpen(true)}>Manage leave types</Button></Box>}
       {leaveTypesError && <Alert severity="error" sx={{ mb: 2 }}>{leaveTypesError}</Alert>}
       {isHR && <LeaveTypeUtility open={leaveUtilityOpen} onClose={() => setLeaveUtilityOpen(false)} types={leaveTypes} onSaved={fetchLeaveTypes} />}
       <Paper
@@ -1534,6 +1533,21 @@ export default function RequestManagement() {
           </Box>
 
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            {isHR && (
+              <Button
+                variant="contained"
+                onClick={() => setLeaveUtilityOpen(true)}
+                sx={{
+                  ...pillButtonSx,
+                  py: 1.1,
+                  bgcolor: GREEN_UI.green,
+                  boxShadow: '0 12px 24px rgba(58, 168, 101, 0.25)',
+                  '&:hover': { bgcolor: GREEN_UI.greenDark, boxShadow: '0 16px 28px rgba(31, 122, 70, 0.28)' },
+                }}
+              >
+                Manage leave types
+              </Button>
+            )}
             <Tooltip title="Refresh requests">
               <span>
                 <Button
