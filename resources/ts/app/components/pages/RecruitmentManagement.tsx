@@ -1252,18 +1252,6 @@ export default function RecruitmentManagement() {
 
       if (employeeSaveError) throw employeeSaveError;
 
-      const { data: applicantIdentity, error: identityError } = await supabase.from('applicants').select('auth_user_id').eq('applicant_id', app.id).single();
-      if (identityError) throw identityError;
-      if (applicantIdentity.auth_user_id) {
-        const { error: conversionError } = await supabase.rpc('convert_applicant_account', { p_applicant_id: app.id, p_employee_id: employeeId });
-        if (conversionError) throw conversionError;
-        setSnackbar({ open: true, message: 'Applicant account converted to an employee account. The existing login and profile are retained.', severity: 'success' });
-        try { await sendApplicantStatusEmail(app, 'Hired'); }
-        catch { setSnackbar({ open: true, message: 'Account converted successfully. The hiring email could not be sent; the existing login remains valid.', severity: 'warning' }); }
-        setViewDialog(false);
-        return;
-      }
-
       const { data: linkedAccount, error: linkedAccountError } = await supabase.from('user_accounts').select('email').eq('employee_id', employeeId).maybeSingle();
       if (linkedAccountError) throw linkedAccountError;
       let loginEmail = linkedAccount?.email || `${loginName}@buenaventura-hris.me`;

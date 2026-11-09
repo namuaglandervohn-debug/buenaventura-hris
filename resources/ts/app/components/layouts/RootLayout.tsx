@@ -118,8 +118,6 @@ export default function RootLayout() {
   // Early return AFTER all hooks
   if (!user) return <Navigate to="/login" replace />;
 
-  if (user.role === 'applicant') return <Navigate to="/applicant" replace />;
-
   const filteredMenuItems = ALL_MENU_ITEMS.filter(item => item.roles.includes(user.role));
 
   const handleLogout = () => { logout(); navigate('/login'); };

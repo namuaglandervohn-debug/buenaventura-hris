@@ -21,10 +21,8 @@ import EmployeeDTR from "./components/pages/EmployeeDTR";
 import LandingPage from "./components/pages/LandingPage";
 import JobPostingManagement from "./components/pages/JobPostingManagement";
 import NotFoundPage from "./components/pages/NotFoundPage";
-import ApplicantPortal from './components/pages/ApplicantPortal';
 
 export const router = createBrowserRouter([
-  { path: '/applicant', element: <ApplicantPortal /> },
   {
     path: "/",
     element: <LandingPage />,

@@ -16,7 +16,7 @@ const deferred = () => {
 };
 const tick = () => new Promise((done) => setTimeout(done, 5));
 
-function harness({ restored = null, rows = [hrProfile, gmProfile], applicantRows = [], getSession, queryResult, signIn, signOut } = {}) {
+function harness({ restored = null, rows = [hrProfile, gmProfile], getSession, queryResult, signIn, signOut } = {}) {
   let listener = () => {};
   const states = [];
   const queries = [];
@@ -44,14 +44,13 @@ function harness({ restored = null, rows = [hrProfile, gmProfile], applicantRows
       },
     },
     from(table) {
-      assert.ok(['user_accounts', 'applicant_profiles'].includes(table));
+      assert.equal(table, 'user_accounts');
       const filters = {};
       return {
         select(columns) { assert.ok(!columns.includes('*')); return this; },
         eq(key, value) { filters[key] = value; return this; },
         is(key, value) { filters[key] = value; return this; },
         async maybeSingle() {
-          if (table === 'applicant_profiles') return { data: applicantRows.find(row => row.auth_user_id === filters.auth_user_id) ?? null, error: null };
           queries.push({ ...filters });
           if (queryResult) return queryResult(filters);
           const matches = rows.filter((row) => Object.entries(filters).every(([key, value]) => row[key] === value));
@@ -64,18 +63,6 @@ function harness({ restored = null, rows = [hrProfile, gmProfile], applicantRows
   const latest = () => states.at(-1);
   return { session, client, states, queries, authCalls, latest, emit };
 }
-
-test('applicant identity comes from its own saved profile, and an employee conversion takes priority', async () => {
-  const h = harness({ rows: [], applicantRows: [{ auth_user_id: hr.id, profile: { firstName: 'Jane', lastName: 'Applicant' } }] });
-  const applicant = await loadAuthProfile(h.client, hr);
-  assert.equal(applicant.role, 'applicant');
-  assert.equal(applicant.id, hr.id);
-  assert.equal(applicant.name, 'Jane Applicant');
-  const converted = harness({ rows: [profile(hr, 'employee')], applicantRows: [{ auth_user_id: hr.id, profile: { firstName: 'Jane', lastName: 'Applicant' } }] });
-  assert.equal((await loadAuthProfile(converted.client, hr)).role, 'employee');
-  const disabled = harness({ rows: [{ ...profile(hr, 'employee'), is_active: false }], applicantRows: [{ auth_user_id: hr.id, profile: { firstName: 'Jane', lastName: 'Applicant' } }] });
-  await assert.rejects(loadAuthProfile(disabled.client, hr), /active matching HRIS account/);
-});
 
 test('login and its SIGNED_IN event perform one profile query; focus/refresh preserve the role', async () => {
   const h = harness();
@@ -202,7 +189,6 @@ test('profile resolution prioritizes auth ID and never falls back to another lin
   assert.deepEqual(h.queries, [
     { is_active: true, auth_user_id: hr.id },
     { is_active: true, email: hr.email, auth_user_id: null },
-    { auth_user_id: hr.id },
   ]);
 });
 

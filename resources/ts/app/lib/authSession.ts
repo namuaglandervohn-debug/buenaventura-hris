@@ -14,7 +14,7 @@ export function normalizeAppRole(role: unknown): UserRole {
   const normalized = String(role ?? '').trim().toLowerCase();
   const aliases: Record<string, string> = { hr_admin: 'hr', admin: 'hr', general_manager: 'gm', accounting_finance: 'accounting', finance: 'accounting' };
   const result = aliases[normalized] ?? normalized;
-  if (!['hr', 'employee', 'supervisor', 'gm', 'accounting', 'applicant'].includes(result)) {
+  if (!['hr', 'employee', 'supervisor', 'gm', 'accounting'].includes(result)) {
     throw new Error('This account does not have a supported HRIS role. Please contact HR.');
   }
   return result;
@@ -36,17 +36,6 @@ export async function loadAuthProfile(client: Client, authUser: Pick<User, 'id' 
     const legacy = await query().eq('email', email).is('auth_user_id', null).maybeSingle();
     if (legacy.error) throw legacy.error;
     account = legacy.data;
-  }
-  if (!account) {
-    const inactive = await client.from('user_accounts').select('user_id').eq('auth_user_id', authUser.id).maybeSingle();
-    if (inactive.error) throw inactive.error;
-    if (inactive.data) throw new Error('This login is not linked to an active matching HRIS account. Please contact HR.');
-    const applicant = await client.from('applicant_profiles').select('auth_user_id,profile').eq('auth_user_id', authUser.id).maybeSingle();
-    if (applicant.error) throw applicant.error;
-    if (applicant.data) {
-      const profile = applicant.data.profile ?? {};
-      return { id: authUser.id, name: [profile.firstName, profile.middleName, profile.lastName, profile.suffix].filter(Boolean).join(' '), email, role: 'applicant' };
-    }
   }
   if (!account || String(account.email).trim().toLowerCase() !== email) {
     throw new Error('This login is not linked to an active matching HRIS account. Please contact HR.');

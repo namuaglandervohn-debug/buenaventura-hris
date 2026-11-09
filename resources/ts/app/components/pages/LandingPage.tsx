@@ -410,7 +410,6 @@ export default function LandingPage() {
               <Button sx={navButtonSx} onClick={() => navigate("/apply")}>
                 Apply
               </Button>
-              <Button sx={navButtonSx} onClick={() => navigate("/applicant")}>Applicant account</Button>
               <Button sx={navButtonSx} onClick={() => navigate("/track")}>
                 Track
               </Button>

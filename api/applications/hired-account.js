@@ -48,12 +48,8 @@ export function createHiredAccountHandler({ env = process.env, clientFactory = c
       if (!employeeId || employeeId.length > 40 || !name || name.length > 160 || password.length < 8 || password.length > 120 || requestedEmail.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail)) {
         throw new AccountError(422, 'A valid employee ID, name, login email and password of at least 8 characters are required.');
       }
-      const employee = check(await admin.from('employees').select('employee_id,applicant_id').eq('employee_id', employeeId).maybeSingle());
+      const employee = check(await admin.from('employees').select('employee_id').eq('employee_id', employeeId).maybeSingle());
       if (!employee) throw new AccountError(422, 'Save the employee record before creating the login account.');
-      if (employee.applicant_id) {
-        const applicant = check(await admin.from('applicants').select('auth_user_id').eq('applicant_id', employee.applicant_id).maybeSingle());
-        if (applicant?.auth_user_id) throw new AccountError(409, 'This employee has an applicant login. Convert the existing applicant account from Recruitment; its password must be retained.');
-      }
       const existing = check(await admin.from('user_accounts').select('user_id,auth_user_id,email,employee_id,role,outlet').eq('employee_id', employeeId).maybeSingle());
       if (existing && existing.role !== 'employee') throw new AccountError(409, 'This employee is linked to a different account role. Review it in User Accounts.');
       const email = existing?.email || requestedEmail;

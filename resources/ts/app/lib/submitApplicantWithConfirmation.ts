@@ -19,7 +19,7 @@ export async function sendApplicantConfirmation(
 
 /** Email delivery is a separate step: its failure must never undo a saved application. */
 export async function submitApplicantWithConfirmation(
-  client: Pick<SupabaseClient, 'from'> & Partial<Pick<SupabaseClient, 'rpc'>>,
+  client: Pick<SupabaseClient, 'rpc'>,
   application: Record<string, unknown>,
   options: { onSaved: (id: string) => void; sendConfirmation: (id: string) => Promise<void> },
 ): Promise<{ applicantId: string; emailNotice: string }> {

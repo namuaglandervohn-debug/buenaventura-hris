@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   Box,
   Typography,
@@ -47,9 +47,6 @@ import {
 } from '@mui/icons-material';
 
 import AuthBackground from '../AuthBackground';
-import { useAuth } from '../../context/AuthContext';
-import { APPLICANT_COUNTRIES as COUNTRIES, APPLICANT_NATIONALITIES as NATIONALITIES, reusableApplicantProfile } from '../../lib/applicantProfile';
-import { completeApplicantAddress, PH_PROVINCES_BY_REGION, CITIES_BY_PROVINCE, ZIP_BY_CITY, BARANGAYS_BY_CITY } from '../../lib/applicantAddress';
 import { copyToClipboard } from '../../lib/copyToClipboard';
 import { saveApplicationFiles } from '../../lib/applicationFiles';
 import { supabase } from '../../lib/supabaseClient';
@@ -72,9 +69,94 @@ const ACCEPTED_APPLICATION_FILE_TYPES = '.pdf,.doc,.docx,.jpg,.jpeg,.png';
 const ACCEPTED_APPLICATION_FILE_LABEL = 'PDF, DOC, DOCX, JPG, JPEG, and PNG';
 const SUPPORTING_DOCUMENT_EXAMPLES = 'Transcript of Records, Birth Certificate, Medical Certificate, valid ID, training certificates, or other required documents';
 
+const COUNTRIES = [
+  'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia',
+  'Australia', 'Austria', 'Azerbaijan', 'Bahamas', 'Bahrain', 'Bangladesh', 'Barbados', 'Belarus',
+  'Belgium', 'Belize', 'Benin', 'Bhutan', 'Bolivia', 'Bosnia and Herzegovina', 'Brazil', 'Brunei',
+  'Bulgaria', 'Cambodia', 'Cameroon', 'Canada', 'Chile', 'China', 'Colombia', 'Costa Rica',
+  'Croatia', 'Cuba', 'Cyprus', 'Czech Republic', 'Denmark', 'Dominican Republic', 'Ecuador',
+  'Egypt', 'Estonia', 'Ethiopia', 'Finland', 'France', 'Georgia', 'Germany', 'Ghana', 'Greece',
+  'Guatemala', 'Honduras', 'Hungary', 'Iceland', 'India', 'Indonesia', 'Iran', 'Iraq', 'Ireland',
+  'Israel', 'Italy', 'Jamaica', 'Japan', 'Jordan', 'Kazakhstan', 'Kenya', 'Kuwait', 'Laos', 'Latvia',
+  'Lebanon', 'Libya', 'Lithuania', 'Malaysia', 'Mexico', 'Mongolia', 'Morocco', 'Myanmar', 'Nepal',
+  'New Zealand', 'Nigeria', 'Norway', 'Oman', 'Pakistan', 'Palestine', 'Panama', 'Paraguay', 'Peru', 'Philippines',
+  'Poland', 'Portugal', 'Qatar', 'Romania', 'Russia', 'Saudi Arabia', 'Singapore', 'South Africa',
+  'South Korea', 'Spain', 'Sri Lanka', 'Sweden', 'Switzerland', 'Taiwan', 'Thailand', 'Turkey',
+  'Ukraine', 'United Arab Emirates', 'United Kingdom', 'United States', 'Uruguay', 'Venezuela', 'Vietnam',
+];
 
+const NATIONALITIES = [
+  'Afghan', 'Albanian', 'Algerian', 'American', 'Andorran', 'Angolan', 'Argentinian',
+  'Armenian', 'Australian', 'Austrian', 'Azerbaijani', 'Bahamian', 'Bahraini', 'Bangladeshi',
+  'Barbadian', 'Belarusian', 'Belgian', 'Belizean', 'Beninese', 'Bhutanese', 'Bolivian', 'Bosnian',
+  'Brazilian', 'British', 'Bruneian', 'Bulgarian', 'Cambodian', 'Cameroonian', 'Canadian', 'Chilean',
+  'Chinese', 'Colombian', 'Congolese', 'Costa Rican', 'Croatian', 'Cuban', 'Cypriot', 'Czech',
+  'Danish', 'Dominican', 'Dutch', 'Ecuadorian', 'Egyptian', 'Emirati', 'Estonian', 'Ethiopian', 'Filipino',
+  'Finnish', 'French', 'Georgian', 'German', 'Ghanaian', 'Greek', 'Guatemalan', 'Honduran',
+  'Hungarian', 'Icelandic', 'Indian', 'Indonesian', 'Iranian', 'Iraqi', 'Irish', 'Israeli', 'Italian',
+  'Jamaican', 'Japanese', 'Jordanian', 'Kazakh', 'Kenyan', 'Korean', 'Kuwaiti', 'Laotian', 'Latvian',
+  'Lebanese', 'Libyan', 'Lithuanian', 'Malaysian', 'Mexican', 'Mongolian', 'Moroccan', 'Myanmar',
+  'Nepalese', 'New Zealander', 'Nigerian', 'Norwegian', 'Omani', 'Pakistani', 'Palestinian',
+  'Panamanian', 'Paraguayan', 'Peruvian', 'Polish', 'Portuguese', 'Qatari', 'Romanian', 'Russian',
+  'Saudi', 'Singaporean', 'South African', 'Spanish', 'Sri Lankan', 'Swedish', 'Swiss', 'Taiwanese',
+  'Thai', 'Turkish', 'Ukrainian', 'Uruguayan', 'Venezuelan', 'Vietnamese',
+];
 
+const PH_PROVINCES_BY_REGION: Record<string, string[]> = {
+  'National Capital Region (NCR)': ['Metro Manila'],
+  'Cordillera Administrative Region (CAR)': ['Abra', 'Apayao', 'Benguet', 'Ifugao', 'Kalinga', 'Mountain Province'],
+  'Region I - Ilocos Region': ['Ilocos Norte', 'Ilocos Sur', 'La Union', 'Pangasinan'],
+  'Region II - Cagayan Valley': ['Batanes', 'Cagayan', 'Isabela', 'Nueva Vizcaya', 'Quirino'],
+  'Region III - Central Luzon': ['Aurora', 'Bataan', 'Bulacan', 'Nueva Ecija', 'Pampanga', 'Tarlac', 'Zambales'],
+  'Region IV-A - CALABARZON': ['Batangas', 'Cavite', 'Laguna', 'Quezon', 'Rizal'],
+  'MIMAROPA Region': ['Marinduque', 'Occidental Mindoro', 'Oriental Mindoro', 'Palawan', 'Romblon'],
+  'Region V - Bicol Region': ['Albay', 'Camarines Norte', 'Camarines Sur', 'Catanduanes', 'Masbate', 'Sorsogon'],
+  'Region VI - Western Visayas': ['Aklan', 'Antique', 'Capiz', 'Guimaras', 'Iloilo', 'Negros Occidental'],
+  'Region VII - Central Visayas': ['Bohol', 'Cebu', 'Negros Oriental', 'Siquijor'],
+  'Region VIII - Eastern Visayas': ['Biliran', 'Eastern Samar', 'Leyte', 'Northern Samar', 'Samar', 'Southern Leyte'],
+  'Region IX - Zamboanga Peninsula': ['Zamboanga del Norte', 'Zamboanga del Sur', 'Zamboanga Sibugay'],
+  'Region X - Northern Mindanao': ['Bukidnon', 'Camiguin', 'Lanao del Norte', 'Misamis Occidental', 'Misamis Oriental'],
+  'Region XI - Davao Region': ['Davao de Oro', 'Davao del Norte', 'Davao del Sur', 'Davao Occidental', 'Davao Oriental'],
+  'Region XII - SOCCSKSARGEN': ['Cotabato', 'Sarangani', 'South Cotabato', 'Sultan Kudarat'],
+  'Region XIII - Caraga': ['Agusan del Norte', 'Agusan del Sur', 'Dinagat Islands', 'Surigao del Norte', 'Surigao del Sur'],
+  'Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)': ['Basilan', 'Lanao del Sur', 'Maguindanao del Norte', 'Maguindanao del Sur', 'Sulu', 'Tawi-Tawi'],
+};
 
+const CITIES_BY_PROVINCE: Record<string, string[]> = {
+  'Metro Manila': ['Caloocan', 'Las Piñas', 'Makati', 'Malabon', 'Mandaluyong', 'Manila', 'Marikina', 'Muntinlupa', 'Navotas', 'Parañaque', 'Pasay', 'Pasig', 'Quezon City', 'San Juan', 'Taguig', 'Valenzuela', 'Pateros'],
+  'Davao del Norte': ['Panabo City', 'Tagum City', 'Samal City', 'Asuncion', 'Braulio E. Dujali', 'Carmen', 'Kapalong', 'New Corella', 'San Isidro', 'Santo Tomas', 'Talaingod'],
+  'Davao del Sur': ['Davao City', 'Digos City', 'Bansalan', 'Hagonoy', 'Kiblawan', 'Magsaysay', 'Malalag', 'Matanao', 'Padada', 'Santa Cruz', 'Sulop'],
+  'Davao Oriental': ['Mati City', 'Baganga', 'Banaybanay', 'Boston', 'Caraga', 'Cateel', 'Governor Generoso', 'Lupon', 'Manay', 'San Isidro', 'Tarragona'],
+  'Davao de Oro': ['Nabunturan', 'Monkayo', 'Mawab', 'Maco', 'Maragusan', 'Laak', 'Compostela', 'Montevista', 'New Bataan', 'Pantukan'],
+  'Davao Occidental': ['Malita', 'Don Marcelino', 'Jose Abad Santos', 'Santa Maria', 'Sarangani'],
+  'Cotabato': ['Kidapawan City', 'Alamada', 'Aleosan', 'Antipas', 'Arakan', 'Banisilan', 'Carmen', 'Kabacan', 'Libungan', 'Matalam', 'Midsayap', 'Pigcawayan', 'Pikit', 'President Roxas', 'Tulunan'],
+  'South Cotabato': ['Koronadal City', 'General Santos City', 'Polomolok', 'Tupi', 'Tampakan', 'Surallah', 'Tboli', 'Lake Sebu', 'Norala', 'Banga', 'Sto. Niño'],
+  'Sarangani': ['Alabel', 'Glan', 'Kiamba', 'Maasim', 'Maitum', 'Malapatan', 'Malungon'],
+  'Sultan Kudarat': ['Isulan', 'Tacurong City', 'Bagumbayan', 'Columbio', 'Esperanza', 'Kalamansig', 'Lambayong', 'Lebak', 'Lutayan', 'Palimbang', 'President Quirino', 'Senator Ninoy Aquino'],
+  'Cebu': ['Cebu City', 'Mandaue City', 'Lapu-Lapu City', 'Talisay City', 'Danao City', 'Toledo City', 'Carcar City', 'Naga City'],
+  'Iloilo': ['Iloilo City', 'Passi City', 'Oton', 'Pavia', 'Santa Barbara', 'Miagao', 'Pototan'],
+  'Cavite': ['Bacoor City', 'Cavite City', 'Dasmariñas City', 'General Trias City', 'Imus City', 'Tagaytay City', 'Trece Martires City'],
+  'Laguna': ['Calamba City', 'San Pablo City', 'Santa Rosa City', 'Biñan City', 'Cabuyao City', 'Los Baños', 'Pagsanjan'],
+  'Batangas': ['Batangas City', 'Lipa City', 'Tanauan City', 'Santo Tomas City', 'Nasugbu', 'Lemery'],
+  'Pampanga': ['Angeles City', 'San Fernando City', 'Mabalacat City', 'Apalit', 'Guagua', 'Lubao', 'Mexico'],
+  'Bulacan': ['Malolos City', 'Meycauayan City', 'San Jose del Monte City', 'Baliuag', 'Bocaue', 'Marilao', 'Plaridel'],
+};
+
+const ZIP_BY_CITY: Record<string, string> = {
+  'Panabo City': '8105', 'Tagum City': '8100', 'Samal City': '8119', 'Davao City': '8000', 'Digos City': '8002', 'Mati City': '8200',
+  'Nabunturan': '8800', 'Malita': '8012', 'Kidapawan City': '9400', 'Koronadal City': '9506', 'General Santos City': '9500',
+  'Alabel': '9501', 'Isulan': '9805', 'Tacurong City': '9800', 'Cebu City': '6000', 'Mandaue City': '6014', 'Lapu-Lapu City': '6015',
+  'Iloilo City': '5000', 'Bacoor City': '4102', 'Dasmariñas City': '4114', 'Imus City': '4103', 'Calamba City': '4027',
+  'Santa Rosa City': '4026', 'Batangas City': '4200', 'Lipa City': '4217', 'Angeles City': '2009', 'San Fernando City': '2000',
+  'Malolos City': '3000', 'Quezon City': '1100', 'Manila': '1000', 'Makati': '1200', 'Taguig': '1630', 'Pasig': '1600',
+};
+
+const BARANGAYS_BY_CITY: Record<string, string[]> = {
+  'Panabo City': ['A.O. Floirendo', 'Buenavista', 'Cacao', 'Cagangohan', 'Consolacion', 'Dapco', 'Gredu', 'J.P. Laurel', 'Kasilak', 'Katipunan', 'Katualan', 'Kauswagan', 'Kiotoy', 'Little Panay', 'Lower Panaga', 'Mabunao', 'Maduao', 'Malativas', 'Manay', 'Nanyo', 'New Malaga', 'New Malitbog', 'New Pandan', 'New Visayas', 'Quezon', 'Salvacion', 'San Francisco', 'San Nicolas', 'San Pedro', 'San Roque', 'San Vicente', 'Santa Cruz', 'Santo Niño', 'Sindaton', 'Southern Davao', 'Tagpore', 'Tibungol', 'Upper Licanan', 'Waterfall'],
+  'Davao City': ['Agdao', 'Baguio Proper', 'Buhangin', 'Calinan', 'Catalunan Grande', 'Matina Crossing', 'Mintal', 'Poblacion', 'Sasa', 'Talomo Proper', 'Toril'],
+  'Tagum City': ['Apokon', 'Magugpo East', 'Magugpo North', 'Magugpo Poblacion', 'Magugpo South', 'Magugpo West', 'Mankilam', 'Visayan Village'],
+  'Mati City': ['Central', 'Dahican', 'Don Enrique Lopez', 'Sainz', 'Tamisan'],
+};
 
 const RELATIONSHIPS = ['Parent', 'Mother', 'Father', 'Spouse', 'Sibling', 'Brother', 'Sister', 'Child', 'Relative', 'Guardian', 'Friend', 'Neighbor', 'Partner', 'Cousin', 'Aunt', 'Uncle', 'Grandparent', 'Other'];
 
@@ -220,10 +302,6 @@ export default function ApplyForJobPage() {
   const [searchParams] = useSearchParams();
   const requestedPosition = (searchParams.get('position') ?? '').trim();
 
-  const { user, loading: authLoading } = useAuth();
-  const [savedProfile, setSavedProfile] = useState<Record<string, any>>({});
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [profileLoaded, setProfileLoaded] = useState(false);
   const [formData, setFormData] = useState<FormState>(EMPTY);
   const [openPositions, setOpenPositions] = useState<string[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(true);
@@ -243,29 +321,6 @@ export default function ApplyForJobPage() {
   const [characterReferences, setCharacterReferences] = useState<CharacterReference[]>([EMPTY_CHARACTER_REFERENCE]);
   const [workExperiences, setWorkExperiences] = useState<WorkExperience[]>([EMPTY_WORK_EXPERIENCE]);
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([EMPTY_EMERGENCY_CONTACT]);
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user || user.role !== 'applicant') { setProfileLoading(false); return; }
-    let active = true;
-    setProfileLoading(true);
-    void (async () => {
-      try {
-        const result = await supabase.from('applicant_profiles').select('profile').eq('auth_user_id', user.id).single();
-        if (result.error) throw result.error;
-        if (!active) return;
-        const profile = completeApplicantAddress(result.data.profile || {});
-        setSavedProfile(profile);
-        setProfileLoaded(true);
-        setFormData(prev => ({ ...prev, ...reusableApplicantProfile(profile, Object.keys(EMPTY)), email: user.email, age: calculateAge(profile.birthdate || ''), contactNumber: sanitizePhoneNumber(profile.contactNumber || ''), position: requestedPosition || prev.position }));
-        if (Array.isArray(profile.workExperiences) && profile.workExperiences.length) setWorkExperiences(profile.workExperiences);
-        if (Array.isArray(profile.characterReferences) && profile.characterReferences.length) setCharacterReferences(profile.characterReferences);
-        if (Array.isArray(profile.emergencyContacts) && profile.emergencyContacts.length) setEmergencyContacts(profile.emergencyContacts);
-      } catch (e: any) { if (active) setError('Your saved profile could not be loaded. '+e.message); }
-      finally { if (active) setProfileLoading(false); }
-    })();
-    return () => { active = false; };
-  }, [user?.id, authLoading]);
 
   const textFieldSx = {
     '& .MuiInputLabel-root.Mui-focused': { color: '#000000', fontWeight: 400 },
@@ -753,12 +808,7 @@ export default function ApplyForJobPage() {
     submissionInProgress.current = true;
     setSubmitting(true); setError(''); setEmailNotice(''); setEmailPending(false);
     try {
-      if (!user) throw new Error('Please sign in before applying.');
-      const applicantEmail = user.email;
-      const profile = { ...reusableApplicantProfile(formData, Object.keys(EMPTY)), workExperiences, characterReferences, emergencyContacts };
-      const profileResult = await supabase.from('applicant_profiles').update({ profile, updated_at: new Date().toISOString() }).eq('auth_user_id', user.id).select('auth_user_id').single();
-      if (profileResult.error) throw profileResult.error;
-      setSavedProfile(profile);
+      const applicantEmail = formData.email.trim().toLowerCase();
 
       const resumeFileData = resumeFiles[0] ? await fileToBase64(resumeFiles[0]) : null;
       const supportingDocumentFiles = await Promise.all(supportingFiles.map(async (file) => ({ name: file.name, type: file.type, data: await fileToBase64(file) })));
@@ -806,7 +856,7 @@ export default function ApplyForJobPage() {
       };
       const fullName = `${formData.firstName} ${formData.middleName} ${formData.lastName} ${formData.suffix}`.replace(/\s+/g, ' ').trim();
       const { emailNotice: confirmationNotice } = await submitApplicantWithConfirmation(supabase, {
-        auth_user_id: user.id, name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
+        name: fullName, first_name: formData.firstName.trim(), middle_name: formData.middleName.trim(), last_name: formData.lastName.trim(), suffix: formData.suffix,
         gender: formData.gender, civil_status: formData.civilStatus, birthdate: formData.birthdate || null, birthplace: birthplaceAddress, height: formData.height, weight: formData.weight,
         email: applicantEmail, phone_number: formatPhoneWithCountryCode(formData.contactNumber), address: currentAddress, position_applied: formData.position, education: formData.education, experience: applicantExperience, cover_letter: JSON.stringify(coverLetterData),
         tin: formData.tin, sss: formData.sss, philhealth: formData.philhealth, pagibig: formData.pagibig,
@@ -863,15 +913,15 @@ export default function ApplyForJobPage() {
   const handleCopyId = async () => { setCopyFailed(false); const ok = await copyToClipboard(applicantId); if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2500); } else setCopyFailed(true); };
   const handleCloseDialog = () => {
     setSuccessDialog(false);
-    setFormData({ ...EMPTY, ...reusableApplicantProfile(savedProfile, Object.keys(EMPTY)), email: user?.email || '' });
+    setFormData(EMPTY);
     setFieldErrors({});
     setEmailNotice('');
     setEmailPending(false);
     setResumeFiles([]);
     setSupportingFiles([]);
-    setCharacterReferences(savedProfile.characterReferences?.length ? savedProfile.characterReferences : [{ ...EMPTY_CHARACTER_REFERENCE }]);
-    setWorkExperiences(savedProfile.workExperiences?.length ? savedProfile.workExperiences : [{ ...EMPTY_WORK_EXPERIENCE }]);
-    setEmergencyContacts(savedProfile.emergencyContacts?.length ? savedProfile.emergencyContacts : [{ ...EMPTY_EMERGENCY_CONTACT }]);
+    setCharacterReferences([{ ...EMPTY_CHARACTER_REFERENCE }]);
+    setWorkExperiences([{ ...EMPTY_WORK_EXPERIENCE }]);
+    setEmergencyContacts([{ ...EMPTY_EMERGENCY_CONTACT }]);
     setActiveStep(0);
     setError('');
   };
@@ -911,13 +961,11 @@ export default function ApplyForJobPage() {
         </Grid>
         <Grid size={addressGrid}>
           <TextField fullWidth required={isRequired} select label="City / Municipality" value={city} onChange={(e) => handleAddressCityChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}City` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}City` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !province}>
-            {city && !cityOptions.includes(city) && <MenuItem value={city}>{city}</MenuItem>}
             {cityOptions.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
         <Grid size={addressGrid}>
           <TextField fullWidth required={isRequired} select label="Barangay" value={formData[`${prefix}Barangay` as FormKey] as string} onChange={(e) => handleAddressBarangayChange(prefix, e.target.value)} error={isRequired && !!fieldErrors[`${prefix}Barangay` as FormKey]} helperText={isRequired ? fieldErrors[`${prefix}Barangay` as FormKey] : ''} sx={textFieldSx} InputLabelProps={{ shrink: true }} disabled={country !== 'Philippines' || !city}>
-            {formData[`${prefix}Barangay` as FormKey] && !barangayOptions.includes(formData[`${prefix}Barangay` as FormKey] as string) && <MenuItem value={formData[`${prefix}Barangay` as FormKey] as string}>{formData[`${prefix}Barangay` as FormKey]}</MenuItem>}
             {barangayOptions.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
           </TextField>
         </Grid>
@@ -931,16 +979,10 @@ export default function ApplyForJobPage() {
     );
   };
 
-  if (authLoading || profileLoading) return <Box sx={{ p: 5 }}><CircularProgress /></Box>;
-  if (!user) return <Navigate to={`/applicant?next=${encodeURIComponent('/apply' + window.location.search)}`} replace />;
-  if (user.role !== 'applicant') return <Navigate to="/dashboard" replace />;
-  if (!profileLoaded) return <Container sx={{ py: 4 }}><Alert severity="error">{error || 'Your profile could not be loaded.'}</Alert><Button onClick={() => window.location.reload()}>Retry</Button></Container>;
-
   return (
     <AuthBackground>
       <Box sx={{ background: 'radial-gradient(circle at top left, rgba(187,247,208,0.75) 0%, rgba(246,251,244,0.98) 36%, #f6fbf4 100%)', borderRadius: { xs: 0, sm: '26px' }, py: { xs: 1.5, sm: 2.5, md: 5 }, px: { xs: 1, sm: 1.5, md: 3 }, minHeight: '100dvh' }}>
         <Container maxWidth="xl" disableGutters sx={{ px: { xs: 0, sm: 2, md: 3 } }}>
-          <Alert severity="info" sx={{ mb: 2 }}>Your saved profile has been loaded. Review these details for this application. <Button onClick={() => navigate('/applicant')}>Manage profile</Button></Alert>
           <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }} spacing={2} sx={{ mb: { xs: 2, md: 3 } }}>
             <Box sx={{ minWidth: 0 }}>
               <Chip
@@ -1185,7 +1227,7 @@ export default function ApplyForJobPage() {
                     <Grid size={fieldGrid}><TextField fullWidth required select label="Civil Status" value={formData.civilStatus} onChange={set('civilStatus')} error={!!fieldErrors.civilStatus} helperText={fieldErrors.civilStatus} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{CIVIL_STATUS.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}</TextField></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required select label="Nationality" value={formData.nationality} onChange={set('nationality')} error={!!fieldErrors.nationality} helperText={fieldErrors.nationality} InputLabelProps={{ shrink: true }} sx={textFieldSx}>{NATIONALITIES.map((nationality) => <MenuItem key={nationality} value={nationality}>{nationality}</MenuItem>)}</TextField></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth placeholder="9XXXXXXXXX" required label="Contact Number" value={formData.contactNumber} onChange={setPhone('contactNumber')} error={!!fieldErrors.contactNumber} inputProps={phoneInputFieldProps} InputProps={{ startAdornment: phoneAdornment }} sx={textFieldSx} /></Grid>
-                    <Grid size={fieldGrid}><TextField fullWidth placeholder="example@email.com" required type="email" label="Email Address" value={formData.email} InputProps={{ readOnly: true }} error={!!fieldErrors.email} helperText={fieldErrors.email || 'Uses your verified applicant account email.'} inputProps={{ maxLength: 120 }} sx={textFieldSx} /></Grid>
+                    <Grid size={fieldGrid}><TextField fullWidth placeholder="example@email.com" required type="email" label="Email Address" value={formData.email} onChange={setEmail} error={!!fieldErrors.email} helperText={fieldErrors.email} inputProps={{ maxLength: 80 }} sx={textFieldSx} /></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required label="Height (cm)" value={formData.height} onChange={setNumeric('height', 3)} error={!!fieldErrors.height} helperText={fieldErrors.height} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 3 }} sx={textFieldSx} /></Grid>
                     <Grid size={fieldGrid}><TextField fullWidth required label="Weight (kg)" value={formData.weight} onChange={setNumeric('weight', 3)} error={!!fieldErrors.weight} helperText={fieldErrors.weight} inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 3 }} sx={textFieldSx} /></Grid>
                     <Grid size={{ xs: 12 }}><Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 1 }}><LocationOnOutlined sx={{ color: '#166534' }} /><Typography fontWeight={700} sx={{ color: '#14532d' }}>Birthplace</Typography></Stack></Grid>

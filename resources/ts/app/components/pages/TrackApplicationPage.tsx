@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router';
-import { useAuth } from '../../context/AuthContext';
+import { useNavigate } from 'react-router';
 import {
   Box,
   Typography,
@@ -132,9 +131,7 @@ const inputSx = {
 
 export default function TrackApplicationPage() {
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
-  const [searchParams] = useSearchParams();
-  const [applicantId, setApplicantId] = useState(searchParams.get('id') || '');
+  const [applicantId, setApplicantId] = useState('');
   const [applicationData, setApplicationData] = useState<ApplicationStatus | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -148,39 +145,12 @@ export default function TrackApplicationPage() {
     try {
       const id = applicantId.trim().toUpperCase();
 
-      const { data, error } = await supabase
-        .from('applicants')
-        .select('*')
-        .eq('applicant_id', id)
-        .single();
+      const { data, error } = await supabase.rpc('track_public_application', { p_applicant_id: id });
 
-      if (error || !data) {
+      if (error) throw error;
+      if (!data) {
         setError('Applicant ID not found. Please check your ID and try again.');
         return;
-      }
-
-      let accountEmail = '';
-
-      if (data.status === 'Hired') {
-        const { data: employeeData, error: employeeError } = await supabase
-          .from('employees')
-          .select('employee_id')
-          .eq('applicant_id', data.applicant_id)
-          .maybeSingle();
-
-        if (employeeError) throw employeeError;
-
-        if (employeeData?.employee_id) {
-          const { data: accountData, error: accountError } = await supabase
-            .from('user_accounts')
-            .select('email')
-            .eq('employee_id', employeeData.employee_id)
-            .maybeSingle();
-
-          if (accountError) throw accountError;
-
-          accountEmail = accountData?.email ?? '';
-        }
       }
 
       setApplicationData({
@@ -197,7 +167,7 @@ export default function TrackApplicationPage() {
         interviewNotes: data.interview_notes ?? '',
         scheduledBy: data.scheduled_by ?? '',
         notes: data.notes ?? '',
-        accountEmail,
+        accountEmail: data.account_email ?? '',
       });
     } catch (e: any) {
       setError(`Could not retrieve application: ${e.message}`);
@@ -257,9 +227,6 @@ export default function TrackApplicationPage() {
       </Stack>
     </Paper>
   );
-
-  if (authLoading) return <Box sx={{ p: 5 }}><CircularProgress /></Box>;
-  if (!user) return <Navigate to="/applicant" replace />;
 
   return (
     <AuthBackground>

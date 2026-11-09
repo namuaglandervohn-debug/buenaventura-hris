@@ -7,7 +7,7 @@ function fixture() {
   const actor = { id: 'admin-auth', email: 'hr@company.com' };
   const state = {
     profiles: [{ user_id: 'HR-1', auth_user_id: actor.id, email: actor.email, is_active: true, role: 'hr_admin' }],
-    employees: [{ employee_id: 'EMP-2026-0001' }], applicants: [],
+    employees: [{ employee_id: 'EMP-2026-0001' }],
     authUsers: [], mutations: [], pages: [], failProfile: false,
   };
   const ok = (data) => ({ data, error: null });
@@ -39,7 +39,7 @@ function fixture() {
       let mutation;
       let payload;
       const execute = () => {
-        const rows = table === 'employees' ? state.employees : table === 'applicants' ? state.applicants : state.profiles;
+        const rows = table === 'employees' ? state.employees : state.profiles;
         const matches = rows.filter((row) => Object.entries(filters).every(([key, value]) => row[key] === value));
         if (mutation) {
           if (state.failProfile) return { data: null, error: new Error('Profile save failed') };
@@ -70,16 +70,6 @@ function fixture() {
   };
   return { state, body, invoke, client };
 }
-
-test('registered applicants cannot be given a duplicate login or have their password reset through the legacy account endpoint', async () => {
-  const f = fixture();
-  f.state.employees[0].applicant_id = 'APP-2026-0001';
-  f.state.applicants.push({ applicant_id: 'APP-2026-0001', auth_user_id: 'original-applicant-auth' });
-  const response = await f.invoke();
-  assert.equal(response.statusCode, 409);
-  assert.match(response.body.message, /Convert the existing applicant account/);
-  assert.deepEqual(f.state.mutations, []);
-});
 
 test('creates an Auth user and linked employee profile; never returns the password or service key', async () => {
   const f = fixture();

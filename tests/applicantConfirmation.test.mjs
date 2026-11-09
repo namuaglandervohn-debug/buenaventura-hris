@@ -6,14 +6,12 @@ import { submitApplicantWithConfirmation, sendApplicantConfirmation, CONFIRMATIO
 const payload = { applicantId: 'APP-2026-ABC123', email: 'applicant@example.com', name: 'Applicant', position: 'Staff' };
 const fakeDatabase = (error = null) => {
   const rows = [];
-  return { rows, from(table) {
-    assert.equal(table, 'applicants');
-    return {
-      select() { return this; }, like() { return this; }, order() { return this; },
-      async range() { return { data: rows.map((row) => ({ applicant_id: row.applicant_id })), error: null }; },
-      async insert(row) { if (!error) rows.push(row); return { error }; },
-      delete() { assert.fail('Email failure must never delete an application'); },
-    };
+  return { rows, async rpc(name, { p_application }) {
+    assert.equal(name, 'submit_public_application');
+    if (error) return { data: null, error };
+    const applicant_id = `APP-2026-${String(rows.length + 1).padStart(4, '0')}`;
+    rows.push({ ...p_application, applicant_id });
+    return { data: applicant_id, error: null };
   } };
 };
 
