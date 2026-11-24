@@ -1569,6 +1569,7 @@ export default function PerformanceEvaluation() {
                           <Chip
                             icon={<DeleteOutline />}
                             label="Delete"
+                            className="hris-chip-danger"
                             size="small"
                             clickable
                             variant="outlined"

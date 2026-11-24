@@ -18,6 +18,7 @@ import {
 import { CheckCircleOutline, Close, EventAvailable, SwapHoriz, Sync } from '../bootstrap/icons';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import { parseScheduleDateRange } from '../../lib/displayDate';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 type SwapDay = typeof DAYS[number];
@@ -37,6 +38,8 @@ type SwapRequest = {
   requester_schedule_id: string;
   recipient_schedule_id: string;
   swap_day: SwapDay;
+  requester_day?: SwapDay;
+  recipient_day?: SwapDay;
   week: string;
   requester_outlet: string | null;
   recipient_outlet: string | null;
@@ -62,10 +65,23 @@ type ScheduleSwapRequestsProps = {
 };
 
 const dayLabel = (day: SwapDay) => day.charAt(0).toUpperCase() + day.slice(1);
+const shortDateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+});
+const swapDateLabel = (week: string, day: SwapDay) => {
+  const start = parseScheduleDateRange(week)?.start;
+  if (!start) return 'Date unavailable';
+  const [year, month, date] = start.split('-').map(Number);
+  const dayIndex = DAYS.indexOf(day);
+  return shortDateFormatter.format(new Date(Date.UTC(year, month - 1, date + dayIndex)));
+};
+const isRestDay = (value?: string | null) => /^(off|rd|rest day)$/i.test(String(value ?? '').trim());
 const isWorkingShift = (value?: string | null) => {
   const shift = String(value ?? '').trim();
-  return Boolean(shift) && !/^(off|rd|rest day)$/i.test(shift);
+  return Boolean(shift) && !/^(off|rd|rest day|leave|flex|suspended)$/i.test(shift);
 };
+const isExchangeableDay = (value?: string | null) => isRestDay(value) || isWorkingShift(value);
+const displayShift = (value?: string | null) => isRestDay(value) ? 'Rest Day' : String(value ?? '').trim();
 const getShift = (schedule: ScheduleRow, day: SwapDay) => String(schedule[day] ?? '').trim();
 const getEmployee = (value?: EmployeeRow | EmployeeRow[] | null) => Array.isArray(value) ? value[0] : value;
 const employeeName = (employee?: EmployeeRow | null) => employee
@@ -93,8 +109,9 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
   const [message, setMessage] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [requesterScheduleId, setRequesterScheduleId] = useState('');
-  const [swapDay, setSwapDay] = useState<SwapDay | ''>('');
-  const [recipientEmployeeId, setRecipientEmployeeId] = useState('');
+  const [requesterDay, setRequesterDay] = useState<SwapDay | ''>('');
+  const [recipientScheduleId, setRecipientScheduleId] = useState('');
+  const [recipientDay, setRecipientDay] = useState<SwapDay | ''>('');
   const [reason, setReason] = useState('');
 
   const refresh = useCallback(async () => {
@@ -171,47 +188,51 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
   }, [isEmployee, onRequestDialogOpened, openRequestDialog]);
 
   const employeeById = useMemo(() => new Map(employees.map(employee => [employee.employee_id, employee])), [employees]);
-  const ownSchedules = useMemo(() => schedules.filter(schedule => schedule.employee_id === employeeId), [employeeId, schedules]);
+  const ownSchedules = useMemo(() => schedules.filter(schedule =>
+    schedule.employee_id === employeeId && !schedule.week.includes('Special Duty:')
+  ), [employeeId, schedules]);
   const selectedOwnSchedule = ownSchedules.find(schedule => schedule.schedule_id === requesterScheduleId);
 
-  const eligibleRecipientsForDay = useCallback((schedule: ScheduleRow | undefined, day: SwapDay) => {
-    if (!schedule) return [] as { employeeId: string; name: string; schedule: ScheduleRow }[];
-    const found = new Map<string, { employeeId: string; name: string; schedule: ScheduleRow }>();
-    schedules.forEach(candidate => {
-      if (candidate.employee_id === employeeId || candidate.week !== schedule.week
-        || candidate.week.includes('Special Duty:')
-        || String(candidate.outlet ?? '').trim().toLowerCase() !== String(schedule.outlet ?? '').trim().toLowerCase()
-        || !isWorkingShift(candidate[day])) return;
-      const employee = employeeById.get(candidate.employee_id);
-      if (!employee || found.has(candidate.employee_id)) return;
-      found.set(candidate.employee_id, { employeeId: candidate.employee_id, name: employeeName(employee), schedule: candidate });
-    });
-    return [...found.values()].sort((left, right) => left.name.localeCompare(right.name));
-  }, [employeeById, employeeId, schedules]);
-
-  const availableDays = useMemo(() => selectedOwnSchedule
-    ? DAYS.filter(day => isWorkingShift(selectedOwnSchedule[day]) && eligibleRecipientsForDay(selectedOwnSchedule, day).length > 0)
-    : [], [eligibleRecipientsForDay, selectedOwnSchedule]);
-  const availableRecipients = useMemo(() => swapDay
-    ? eligibleRecipientsForDay(selectedOwnSchedule, swapDay)
-    : [], [eligibleRecipientsForDay, selectedOwnSchedule, swapDay]);
-  const selectedRecipient = availableRecipients.find(option => option.employeeId === recipientEmployeeId);
+  const requesterDays = useMemo(() => selectedOwnSchedule
+    ? DAYS.filter(day => isExchangeableDay(selectedOwnSchedule[day]))
+    : [], [selectedOwnSchedule]);
+  const coworkerSchedules = useMemo(() => selectedOwnSchedule && requesterDay
+    ? schedules.filter(schedule => schedule.employee_id !== employeeId
+      && schedule.week === selectedOwnSchedule.week
+      && !schedule.week.includes('Special Duty:')
+      && ['Published', 'Confirmed'].includes(schedule.status)
+      && DAYS.some(day => isWorkingShift(schedule[day]))
+      && employeeById.has(schedule.employee_id))
+      .sort((left, right) => {
+        const leftName = employeeName(employeeById.get(left.employee_id));
+        const rightName = employeeName(employeeById.get(right.employee_id));
+        return leftName.localeCompare(rightName)
+          || String(left.outlet ?? '').localeCompare(String(right.outlet ?? ''));
+      })
+    : [], [employeeById, employeeId, requesterDay, schedules, selectedOwnSchedule]);
+  const selectedRecipient = coworkerSchedules.find(schedule => schedule.schedule_id === recipientScheduleId);
+  const recipientDays = useMemo(() => selectedRecipient
+    ? DAYS.filter(day => isExchangeableDay(selectedRecipient[day]))
+    : [], [selectedRecipient]);
+  const isRestDayForRestDay = Boolean(requesterDay && recipientDay && selectedOwnSchedule && selectedRecipient
+    && isRestDay(selectedOwnSchedule[requesterDay]) && isRestDay(selectedRecipient[recipientDay]));
 
   const submitRequest = async () => {
-    if (!selectedOwnSchedule || !swapDay || !selectedRecipient) return;
+    if (!selectedOwnSchedule || !requesterDay || !selectedRecipient || !recipientDay) return;
     setBusyId('submit');
     setMessage('');
     try {
-      const { error: submitError } = await supabase.rpc('submit_schedule_swap_request', {
-        p_recipient_employee_id: selectedRecipient.employeeId,
+      const { error: submitError } = await supabase.rpc('submit_schedule_day_swap_request', {
+        p_recipient_employee_id: selectedRecipient.employee_id,
         p_requester_schedule_id: selectedOwnSchedule.schedule_id,
-        p_recipient_schedule_id: selectedRecipient.schedule.schedule_id,
-        p_swap_day: swapDay,
+        p_recipient_schedule_id: selectedRecipient.schedule_id,
+        p_requester_day: requesterDay,
+        p_recipient_day: recipientDay,
         p_reason: reason.trim(),
       });
       if (submitError) throw submitError;
       setDialogOpen(false);
-      setRequesterScheduleId(''); setSwapDay(''); setRecipientEmployeeId(''); setReason('');
+      setRequesterScheduleId(''); setRequesterDay(''); setRecipientScheduleId(''); setRecipientDay(''); setReason('');
       setMessage('Swap request sent. The other employee must accept it before HR can review it.');
       await refresh();
     } catch (cause: any) {
@@ -282,7 +303,7 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
       {error && <Alert severity="error" sx={{ mb: 1.5 }}>{error}</Alert>}
       {message && <Alert severity="success" sx={{ mb: 1.5 }}>{message}</Alert>}
       {isEmployee && !loading && ownSchedules.length === 0 && (
-        <Alert severity="info" sx={{ mb: 1.5 }}>You need a published or confirmed schedule before you can request a swap.</Alert>
+        <Alert severity="info" sx={{ mb: 1.5 }}>You need a regular published or confirmed weekly schedule before you can request a swap. Special-duty assignments are not eligible.</Alert>
       )}
 
       {loading ? (
@@ -307,13 +328,13 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
                     <Chip size="small" label={request.status} color={statusColor(request.status)} variant="outlined" />
                   </Box>
                   <Typography variant="body2" fontWeight={700} sx={{ mb: 0.6 }}>
-                    {requester} ↔ {recipient} · {dayLabel(request.swap_day)} · {request.week}
+                    {requester} ({dayLabel(request.requester_day ?? request.swap_day)} | {swapDateLabel(request.week, request.requester_day ?? request.swap_day)}) {'<->'} {recipient} ({dayLabel(request.recipient_day ?? request.swap_day)} | {swapDateLabel(request.week, request.recipient_day ?? request.swap_day)})
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {requester}: <strong>{request.requester_shift}</strong> ({request.requester_outlet || 'No outlet'})
+                    {requester}: <strong>{dayLabel(request.requester_day ?? request.swap_day)} · {displayShift(request.requester_shift)}</strong> ({request.requester_outlet || 'No outlet'})
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {recipient}: <strong>{request.recipient_shift}</strong> ({request.recipient_outlet || 'No outlet'})
+                    {recipient}: <strong>{dayLabel(request.recipient_day ?? request.swap_day)} · {displayShift(request.recipient_shift)}</strong> ({request.recipient_outlet || 'No outlet'})
                   </Typography>
                   {request.reason && <Typography variant="body2" sx={{ mt: 0.75 }}>Reason: {request.reason}</Typography>}
                   {request.recipient_note && <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>Coworker note: {request.recipient_note}</Typography>}
@@ -344,13 +365,10 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle fontWeight={800}>Request a Schedule Swap</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Choose one of your scheduled days and a coworker who is also scheduled that same day and week.
-          </Typography>
           <Grid container spacing={1.5}>
             <Grid size={12}>
               <TextField fullWidth select label="Your Schedule" value={requesterScheduleId}
-                onChange={event => { setRequesterScheduleId(event.target.value); setSwapDay(''); setRecipientEmployeeId(''); }}
+                onChange={event => { setRequesterScheduleId(event.target.value); setRequesterDay(''); setRecipientScheduleId(''); setRecipientDay(''); }}
                 InputLabelProps={{ shrink: true }} sx={fieldSx}>
                 {ownSchedules.map(schedule => (
                   <MenuItem key={schedule.schedule_id} value={schedule.schedule_id}>
@@ -359,33 +377,66 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
                 ))}
               </TextField>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth select label="Workday to Swap" value={swapDay}
-                onChange={event => { setSwapDay(event.target.value as SwapDay); setRecipientEmployeeId(''); }}
+            <Grid size={12}>
+              <TextField fullWidth select label="Your Day to Exchange" value={requesterDay}
+                onChange={event => { setRequesterDay(event.target.value as SwapDay); setRecipientScheduleId(''); setRecipientDay(''); }}
                 disabled={!selectedOwnSchedule} InputLabelProps={{ shrink: true }} sx={fieldSx}>
-                {availableDays.map(day => <MenuItem key={day} value={day}>{dayLabel(day)} · {getShift(selectedOwnSchedule!, day)}</MenuItem>)}
+                <MenuItem value="" disabled>Select your workday</MenuItem>
+                {requesterDays.map(day => <MenuItem key={day} value={day}>{dayLabel(day)} · {displayShift(selectedOwnSchedule![day])}</MenuItem>)}
               </TextField>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth select label="Coworker" value={recipientEmployeeId}
-                onChange={event => setRecipientEmployeeId(event.target.value)} disabled={!swapDay}
+            <Grid size={12}>
+              <TextField fullWidth select label="Coworker's Schedule" value={recipientScheduleId}
+                onChange={event => { setRecipientScheduleId(event.target.value); setRecipientDay(''); }} disabled={!requesterDay}
                 InputLabelProps={{ shrink: true }} sx={fieldSx}>
-                {availableRecipients.map(option => (
-                  <MenuItem key={option.employeeId} value={option.employeeId}>
-                    {option.name} · {getShift(option.schedule, swapDay as SwapDay)}
+                <MenuItem value="" disabled>Select coworker schedule</MenuItem>
+                {coworkerSchedules.map(schedule => (
+                  <MenuItem key={schedule.schedule_id} value={schedule.schedule_id}>
+                    {employeeName(employeeById.get(schedule.employee_id))} · {schedule.outlet || 'No outlet'}
                   </MenuItem>
                 ))}
               </TextField>
             </Grid>
+            {selectedRecipient && (
+              <Grid size={12}>
+                <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2, borderColor: 'rgba(76, 150, 89, 0.25)', bgcolor: '#fbfff9' }}>
+                  <Typography fontWeight={700} sx={{ mb: 0.75 }}>
+                    {employeeName(employeeById.get(selectedRecipient.employee_id))}'s full week · {selectedRecipient.outlet || 'No outlet'}
+                  </Typography>
+                  <Grid container spacing={0.75}>
+                    {DAYS.map(day => {
+                      const shift = getShift(selectedRecipient, day);
+                      const isWorkday = isWorkingShift(shift);
+                      return <Grid key={day} size={{ xs: 6, sm: 4 }}>
+                        <Typography variant="caption" color="text.secondary">{dayLabel(day)}</Typography>
+                        <Typography variant="body2" fontWeight={isWorkday ? 600 : 400}>{shift ? displayShift(shift) : 'Not scheduled'}</Typography>
+                      </Grid>;
+                    })}
+                  </Grid>
+                </Paper>
+              </Grid>
+            )}
+            <Grid size={12}>
+              <TextField fullWidth select label="Coworker's Day to Exchange" value={recipientDay}
+                onChange={event => setRecipientDay(event.target.value as SwapDay)} disabled={!selectedRecipient}
+                InputLabelProps={{ shrink: true }} sx={fieldSx}>
+                <MenuItem value="" disabled>Select coworker's workday</MenuItem>
+                {recipientDays.map(day => <MenuItem key={day} value={day}>{dayLabel(day)} · {displayShift(selectedRecipient![day])}</MenuItem>)}
+              </TextField>
+            </Grid>
+            {isRestDayForRestDay && (
+              <Grid size={12}>
+                <Alert severity="warning">Choose at least one working day. Swapping two Rest Days would not change either schedule.</Alert>
+              </Grid>
+            )}
             <Grid size={12}>
               <TextField fullWidth multiline minRows={2} label="Reason (optional)" value={reason}
                 onChange={event => setReason(event.target.value)} InputLabelProps={{ shrink: true }} sx={fieldSx} />
             </Grid>
-            {selectedRecipient && selectedOwnSchedule && swapDay && (
+            {selectedRecipient && selectedOwnSchedule && requesterDay && recipientDay && (
               <Grid size={12}>
                 <Alert severity="info">
-                  If approved, {dayLabel(swapDay)} shifts will switch: {getShift(selectedOwnSchedule, swapDay)} ↔ {getShift(selectedRecipient.schedule, swapDay)}.
-                  The coworker must accept first, then HR confirms.
+                  If approved, your {dayLabel(requesterDay)} shift ({displayShift(selectedOwnSchedule[requesterDay])}) at {selectedOwnSchedule.outlet || 'your outlet'} will exchange with {employeeName(employeeById.get(selectedRecipient.employee_id))}'s {dayLabel(recipientDay)} shift ({displayShift(selectedRecipient[recipientDay])}) at {selectedRecipient.outlet || 'their outlet'}. Each employee keeps their own outlet assignment. The coworker must accept first, then HR confirms.
                 </Alert>
               </Grid>
             )}
@@ -393,7 +444,7 @@ export default function ScheduleSwapRequests({ embedded = false, openRequestDial
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ textTransform: 'none' }}>Cancel</Button>
-          <Button variant="contained" onClick={() => void submitRequest()} disabled={!selectedOwnSchedule || !swapDay || !selectedRecipient || Boolean(busyId)}
+          <Button variant="contained" onClick={() => void submitRequest()} disabled={!selectedOwnSchedule || !requesterDay || !selectedRecipient || !recipientDay || isRestDayForRestDay || Boolean(busyId)}
             sx={{ textTransform: 'none', borderRadius: 2, bgcolor: '#20834f' }}>
             {busyId === 'submit' ? <CircularProgress size={18} color="inherit" /> : 'Send Swap Request'}
           </Button>

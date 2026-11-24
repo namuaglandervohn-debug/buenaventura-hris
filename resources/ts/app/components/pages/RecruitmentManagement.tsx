@@ -2279,6 +2279,7 @@ export default function RecruitmentManagement() {
                           <Chip
                             icon={app.isArchived ? <UnarchiveOutlined /> : <ArchiveOutlined />}
                             label={app.isArchived ? 'Restore' : 'Archive'}
+                            className={app.isArchived ? 'hris-chip-restore' : 'hris-chip-archive'}
                             size="small"
                             clickable
                             variant="outlined"

@@ -137,8 +137,6 @@ const EMPTY_SPECIAL_DUTY = {
   outlet: '',
   dutyDate: '',
   shift: '',
-  timeIn: '',
-  timeOut: '',
   breakTime: '1 hour',
   reason: '',
 };
@@ -513,7 +511,12 @@ function WeeklySchedule({ schedules, onRequestSwap, showSwapRequest = false }: {
               <TextField select size="small" value={activeWeek}
                 onChange={event => setSelectedWeek(event.target.value)}
                 inputProps={{ 'aria-label': 'Schedule week' }}
-                sx={{ ...softTextFieldSx, minWidth: 210, '& .MuiInputBase-root': { height: 34 }, '& .MuiSelect-select': { py: 0.75 } }}>
+                sx={{
+                  ...softTextFieldSx,
+                  minWidth: 210,
+                  '& .MuiInputBase-root, & .hris-field, & .form-select': { height: 36, minHeight: 36 },
+                  '& .form-select': { padding: '0 12px' },
+                }}>
                 {options.map(([key, option]) => <MenuItem key={key} value={key}>{option.label}</MenuItem>)}
               </TextField>
             </Box>
@@ -524,21 +527,24 @@ function WeeklySchedule({ schedules, onRequestSwap, showSwapRequest = false }: {
               <TextField select size="small" value={activeOutlet}
                 onChange={event => setSelectedOutlet(event.target.value)}
                 inputProps={{ 'aria-label': 'Filter outlet' }}
-                sx={{ ...softTextFieldSx, minWidth: 170, '& .MuiInputBase-root': { height: 34 }, '& .MuiSelect-select': { py: 0.75 } }}>
+                sx={{
+                  ...softTextFieldSx,
+                  minWidth: 170,
+                  '& .MuiInputBase-root, & .hris-field, & .form-select': { height: 36, minHeight: 36 },
+                  '& .form-select': { padding: '0 12px' },
+                }}>
                 {outletOptions.map(outlet => <MenuItem key={outlet} value={outlet}>{outlet}</MenuItem>)}
               </TextField>
             </Box>
           )}
-          <Button variant="outlined" className="hris-light-action" size="small" startIcon={<Print />} onClick={printSchedule}>
+          <Button variant="outlined" className="hris-toolbar-action" size="small" startIcon={<Print />} onClick={printSchedule}>
             Print
           </Button>
-          <Button variant="outlined" color="inherit" size="small" startIcon={<Download />} onClick={downloadCsv}
-            sx={{ color: '#fff', borderColor: 'currentColor', '&:hover': { borderColor: 'currentColor', bgcolor: 'rgba(255,255,255,0.12)' } }}>
+          <Button variant="outlined" className="hris-toolbar-action" size="small" startIcon={<Download />} onClick={downloadCsv}>
             Download CSV
           </Button>
           {showSwapRequest && onRequestSwap && (
-            <Button variant="contained" color="inherit" size="small" startIcon={<Sync />} onClick={onRequestSwap}
-              sx={{ background: '#fff', color: GREEN_UI.greenDark, '&:hover': { background: GREEN_UI.greenSoft } }}>
+            <Button variant="outlined" className="hris-toolbar-action" size="small" startIcon={<Sync />} onClick={onRequestSwap}>
               Request Schedule Swap
             </Button>
           )}
@@ -972,7 +978,9 @@ export default function ScheduleManagement() {
     const dutyDate = specialDutyForm.dutyDate;
     const selectedDate = parseDateInput(dutyDate);
     const dayKey = selectedDate ? DATE_DAY_KEYS[selectedDate.getDay()] : '';
-    const shift = (specialDutyForm.shift || (specialDutyForm.timeIn && specialDutyForm.timeOut ? `${specialDutyForm.timeIn} - ${specialDutyForm.timeOut}` : '')).trim();
+    const enteredShift = specialDutyForm.shift.trim();
+    const namedShift = /^.+\((.+)\)$/.exec(enteredShift)?.[1]?.trim();
+    const parsedShift = parseRegularScheduleShift(namedShift || enteredShift);
     const reason = specialDutyForm.reason.trim();
     const weekRange = formatWeekRangeFromDate(dutyDate);
 
@@ -986,8 +994,8 @@ export default function ScheduleManagement() {
       return;
     }
 
-    if (!shift) {
-      setSnackbar({ open: true, message: 'Enter or select the additional duty shift.', severity: 'error' });
+    if (!parsedShift) {
+      setSnackbar({ open: true, message: `Select or enter a valid duty shift, such as ${splitShiftExample}.`, severity: 'error' });
       return;
     }
 
@@ -1018,7 +1026,7 @@ export default function ScheduleManagement() {
       const scheduleIds = await nextScheduleIds(selectedEmployees.length);
       const dayAssignments = DAYS.reduce((acc, day) => ({
         ...acc,
-        [day]: day === dayKey ? shift : 'Off',
+        [day]: day === dayKey ? parsedShift.label : 'Off',
       }), {} as Record<string, string>);
 
       const payload = selectedEmployees.map((employee, index) => ({
@@ -1027,8 +1035,8 @@ export default function ScheduleManagement() {
         position: employee.position || specialDutyForm.position || '',
         outlet: specialDutyForm.outlet === NO_OUTLET ? '' : specialDutyForm.outlet || '',
         week: `${weekRange}${SPECIAL_DUTY_SEPARATOR}${reason}`,
-        time_in: specialDutyForm.timeIn || null,
-        time_out: specialDutyForm.timeOut || null,
+        time_in: parsedShift.timeIn,
+        time_out: parsedShift.timeOut,
         break_time: specialDutyForm.breakTime || '',
         ...dayAssignments,
         status: 'Draft',
@@ -2001,7 +2009,7 @@ export default function ScheduleManagement() {
             />
           </Grid>
           {canManageSchedule && (
-          <Grid size={{ xs: 12, md: 4 }}>
+          <Grid size={{ xs: 12, md: 4 }} sx={{ alignSelf: 'flex-end' }}>
             <Button
               fullWidth
               variant="outlined"
@@ -2307,6 +2315,7 @@ export default function ScheduleManagement() {
                         <Chip
                           icon={<CancelOutlined sx={{ fontSize: '0.85rem !important' }} />}
                           label="Delete"
+                          className="hris-chip-danger"
                           size="small"
                           clickable
                           variant="outlined"
@@ -2531,7 +2540,6 @@ export default function ScheduleManagement() {
                   sx={softTextFieldSx}
                   onChange={e => setForm(prev => ({ ...prev, outlet: e.target.value }))}
                   InputLabelProps={{ shrink: true }}
-                  helperText="Applies to this schedule only; the employee’s official outlet stays unchanged."
                 >
                   <MenuItem key="outlet-empty" value="">Select outlet</MenuItem>
                   <MenuItem value={NO_OUTLET}>No Outlet</MenuItem>
@@ -2661,6 +2669,7 @@ export default function ScheduleManagement() {
                     disabled={!canApplyBulkShift}
                     color="primary"
                     onClick={applySelectedWorkdays}
+                    className="hris-chip-action"
                     sx={{ fontWeight: 700 }}
                   />
                   <Chip
@@ -2673,6 +2682,7 @@ export default function ScheduleManagement() {
                     aria-expanded={Boolean(restDayAnchor)}
                     aria-controls={restDayAnchor ? 'rest-day-menu' : undefined}
                     onClick={event => setRestDayAnchor(event.currentTarget)}
+                    className="hris-chip-action"
                     sx={{ fontWeight: 700 }}
                   />
                   <Menu
@@ -2755,7 +2765,6 @@ export default function ScheduleManagement() {
                   InputLabelProps={{ shrink: true }}
                   size="small"
                   sx={softTextFieldSx}
-                  helperText="Applies to this special duty only; the employee’s official outlet stays unchanged."
                 >
                   <MenuItem value="">Select outlet</MenuItem>
                   <MenuItem value={NO_OUTLET}>No Outlet</MenuItem>
@@ -2790,6 +2799,7 @@ export default function ScheduleManagement() {
                       required
                       label="Duty Shift"
                       placeholder="e.g. 8:00 AM - 5:00 PM"
+                      helperText="Attendance uses this shift; start and end times are derived automatically."
                       size="small"
                       InputLabelProps={{ shrink: true }}
                       sx={softTextFieldSx}
@@ -2797,31 +2807,7 @@ export default function ScheduleManagement() {
                   )}
                 />
               </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
-                <TextField
-                  fullWidth
-                  label="Start Time"
-                  type="time"
-                  value={specialDutyForm.timeIn}
-                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, timeIn: event.target.value }))}
-                  InputLabelProps={{ shrink: true }}
-                  size="small"
-                  sx={softTextFieldSx}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
-                <TextField
-                  fullWidth
-                  label="End Time"
-                  type="time"
-                  value={specialDutyForm.timeOut}
-                  onChange={event => setSpecialDutyForm(prev => ({ ...prev, timeOut: event.target.value }))}
-                  InputLabelProps={{ shrink: true }}
-                  size="small"
-                  sx={softTextFieldSx}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
+              <Grid size={{ xs: 12, sm: 6 }}>
                 <Autocomplete
                   freeSolo
                   options={BREAK_TIME_OPTIONS}
@@ -2866,7 +2852,7 @@ export default function ScheduleManagement() {
                 : 'Not selected'],
               ['Schedule outlet', displayWorkArea(specialDutyForm.outlet) || 'Not selected'],
               ['Date', specialDutyForm.dutyDate || 'Not selected'],
-              ['Time', specialDutyForm.shift || (specialDutyForm.timeIn && specialDutyForm.timeOut ? `${specialDutyForm.timeIn} - ${specialDutyForm.timeOut}` : 'Not selected')],
+              ['Time', specialDutyForm.shift || 'Not selected'],
               ['Reason', specialDutyForm.reason || 'Not provided'],
             ].map(([label, value]) => (
               <Typography key={label} variant="caption" sx={{ display: 'block', color: GREEN_UI.muted, lineHeight: 1.7 }}>
@@ -2978,7 +2964,6 @@ export default function ScheduleManagement() {
                   InputLabelProps={{ shrink: true }}
                   size="small"
                   sx={softTextFieldSx}
-                  helperText="Applies to this schedule only; the employee’s official outlet stays unchanged."
                 >
                   <MenuItem key="edit-outlet-empty" value="">Select outlet…</MenuItem>
                   <MenuItem value={NO_OUTLET}>No Outlet</MenuItem>

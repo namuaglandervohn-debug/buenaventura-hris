@@ -1,0 +1,1400 @@
+Enum "auth"."aal_level" {
+  "aal1"
+  "aal2"
+  "aal3"
+}
+
+Enum "auth"."code_challenge_method" {
+  "s256"
+  "plain"
+}
+
+Enum "auth"."factor_status" {
+  "unverified"
+  "verified"
+}
+
+Enum "auth"."factor_type" {
+  "totp"
+  "webauthn"
+  "phone"
+  "recovery_code"
+}
+
+Enum "auth"."oauth_authorization_status" {
+  "pending"
+  "approved"
+  "denied"
+  "expired"
+}
+
+Enum "auth"."oauth_client_type" {
+  "public"
+  "confidential"
+}
+
+Enum "auth"."oauth_registration_type" {
+  "dynamic"
+  "manual"
+}
+
+Enum "auth"."oauth_response_type" {
+  "code"
+}
+
+Enum "auth"."one_time_token_type" {
+  "confirmation_token"
+  "reauthentication_token"
+  "recovery_token"
+  "email_change_token_new"
+  "email_change_token_current"
+  "phone_change_token"
+}
+
+Table "auth"."users" {
+  "instance_id" uuid
+  "id" uuid [pk, not null]
+  "aud" varchar(255)
+  "role" varchar(255)
+  "email" varchar(255) [unique]
+  "encrypted_password" varchar(255)
+  "email_confirmed_at" timestamptz
+  "invited_at" timestamptz
+  "confirmation_token" varchar(255) [unique]
+  "confirmation_sent_at" timestamptz
+  "recovery_token" varchar(255) [unique]
+  "recovery_sent_at" timestamptz
+  "email_change_token_new" varchar(255) [unique]
+  "email_change" varchar(255)
+  "email_change_sent_at" timestamptz
+  "last_sign_in_at" timestamptz
+  "raw_app_meta_data" jsonb
+  "raw_user_meta_data" jsonb
+  "is_super_admin" bool
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "phone" text [unique, default: `NULL::character varying`]
+  "phone_confirmed_at" timestamptz
+  "phone_change" text [default: '']
+  "phone_change_token" varchar(255) [default: '']
+  "phone_change_sent_at" timestamptz
+  "confirmed_at" timestamptz
+  "email_change_token_current" varchar(255) [unique, default: '']
+  "email_change_confirm_status" int2 [check: `(email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)`, default: 0]
+  "banned_until" timestamptz
+  "reauthentication_token" varchar(255) [unique, default: '']
+  "reauthentication_sent_at" timestamptz
+  "is_sso_user" bool [not null, default: false, note: 'Auth: Set this column to true when the account comes from SSO. These accounts can have duplicate emails.']
+  "deleted_at" timestamptz
+  "is_anonymous" bool [not null, default: false]
+
+  Indexes {
+    created_at [type: btree, name: "idx_users_created_at_desc"]
+    email [type: btree, name: "idx_users_email"]
+    last_sign_in_at [type: btree, name: "idx_users_last_sign_in_at_desc"]
+    (instance_id, `lower((email)::text)`) [type: btree, name: "users_instance_id_email_idx"]
+    instance_id [type: btree, name: "users_instance_id_idx"]
+    is_anonymous [type: btree, name: "users_is_anonymous_idx"]
+  }
+  Note: 'Auth: Stores user login data within a secure schema.'
+}
+
+Table "auth"."refresh_tokens" {
+  "instance_id" uuid
+  "id" int8 [pk, not null, increment]
+  "token" varchar(255) [unique]
+  "user_id" varchar(255)
+  "revoked" bool
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "parent" varchar(255)
+  "session_id" uuid
+
+  Indexes {
+    instance_id [type: btree, name: "refresh_tokens_instance_id_idx"]
+    (instance_id, user_id) [type: btree, name: "refresh_tokens_instance_id_user_id_idx"]
+    parent [type: btree, name: "refresh_tokens_parent_idx"]
+    (session_id, revoked) [type: btree, name: "refresh_tokens_session_id_revoked_idx"]
+    updated_at [type: btree, name: "refresh_tokens_updated_at_idx"]
+  }
+  Note: 'Auth: Store of tokens used to refresh JWT tokens once they expire.'
+}
+
+Table "auth"."instances" {
+  "id" uuid [pk, not null]
+  "uuid" uuid
+  "raw_base_config" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  Note: 'Auth: Manages users across multiple sites.'
+}
+
+Table "auth"."audit_log_entries" {
+  "instance_id" uuid
+  "id" uuid [pk, not null]
+  "payload" json
+  "created_at" timestamptz
+  "ip_address" varchar(64) [not null, default: '']
+
+  Indexes {
+    instance_id [type: btree, name: "audit_logs_instance_id_idx"]
+  }
+  Note: 'Auth: Audit trail for user actions.'
+}
+
+Table "auth"."schema_migrations" {
+  "version" varchar(255) [pk, not null]
+  Note: 'Auth: Manages updates to the auth system.'
+}
+
+Table "auth"."identities" {
+  "provider_id" text [not null]
+  "user_id" uuid [not null]
+  "identity_data" jsonb [not null]
+  "provider" text [not null]
+  "last_sign_in_at" timestamptz
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "email" text [note: 'Auth: Email is a generated column that references the optional email property in the identity_data']
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+
+  Indexes {
+    (provider_id, provider) [type: btree, unique, name: "identities_provider_id_provider_unique"]
+    email [type: btree, name: "identities_email_idx"]
+    user_id [type: btree, name: "identities_user_id_idx"]
+  }
+  Note: 'Auth: Stores identities associated to a user.'
+}
+
+Table "auth"."sessions" {
+  "id" uuid [pk, not null]
+  "user_id" uuid [not null]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "factor_id" uuid
+  "aal" auth.aal_level
+  "not_after" timestamptz [note: 'Auth: Not after is a nullable column that contains a timestamp after which the session should be regarded as expired.']
+  "refreshed_at" timestamp
+  "user_agent" text
+  "ip" inet
+  "tag" text
+  "oauth_client_id" uuid
+  "refresh_token_hmac_key" text [note: 'Holds a HMAC-SHA256 key used to sign refresh tokens for this session.']
+  "refresh_token_counter" int8 [note: 'Holds the ID (counter) of the last issued refresh token.']
+  "scopes" text [check: `char_length(scopes) <= 4096`]
+
+  Indexes {
+    not_after [type: btree, name: "sessions_not_after_idx"]
+    oauth_client_id [type: btree, name: "sessions_oauth_client_id_idx"]
+    user_id [type: btree, name: "sessions_user_id_idx"]
+    (user_id, created_at) [type: btree, name: "user_id_created_at_idx"]
+  }
+  Note: 'Auth: Stores session data associated to a user.'
+}
+
+Table "auth"."mfa_factors" {
+  "id" uuid [pk, not null]
+  "user_id" uuid [not null]
+  "friendly_name" text
+  "factor_type" auth.factor_type [not null]
+  "status" auth.factor_status [not null]
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+  "secret" text
+  "phone" text
+  "last_challenged_at" timestamptz [unique]
+  "web_authn_credential" jsonb
+  "web_authn_aaguid" uuid
+  "last_webauthn_challenge_data" jsonb [note: 'Stores the latest WebAuthn challenge data including attestation/assertion for customer verification']
+
+  Indexes {
+    (friendly_name, user_id) [type: btree, unique, name: "mfa_factors_user_friendly_name_unique"]
+    (user_id, phone) [type: btree, unique, name: "unique_phone_factor_per_user"]
+    (user_id, created_at) [type: btree, name: "factor_id_created_at_idx"]
+    user_id [type: btree, name: "mfa_factors_user_id_idx"]
+  }
+  Note: 'auth: stores metadata about factors'
+}
+
+Table "auth"."mfa_challenges" {
+  "id" uuid [pk, not null]
+  "factor_id" uuid [not null]
+  "created_at" timestamptz [not null]
+  "verified_at" timestamptz
+  "ip_address" inet [not null]
+  "otp_code" text
+  "web_authn_session_data" jsonb
+
+  Indexes {
+    created_at [type: btree, name: "mfa_challenge_created_at_idx"]
+  }
+  Note: 'auth: stores metadata about challenge requests made'
+}
+
+Table "auth"."mfa_amr_claims" {
+  "session_id" uuid [not null]
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+  "authentication_method" text [not null]
+  "id" uuid [pk, not null]
+
+  Indexes {
+    (session_id, authentication_method) [type: btree, unique, name: "mfa_amr_claims_session_id_authentication_method_pkey"]
+  }
+  Note: 'auth: stores authenticator method reference claims for multi factor authentication'
+}
+
+Table "auth"."sso_providers" {
+  "id" uuid [pk, not null]
+  "resource_id" text [check: `(resource_id = NULL::text) OR (char_length(resource_id) > 0)`, note: 'Auth: Uniquely identifies a SSO provider according to a user-chosen resource ID (case insensitive), useful in infrastructure as code.']
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "disabled" bool
+
+  Indexes {
+    resource_id [type: btree, name: "sso_providers_resource_id_pattern_idx"]
+  }
+  Note: 'Auth: Manages SSO identity provider information; see saml_providers for SAML.'
+}
+
+Table "auth"."sso_domains" {
+  "id" uuid [pk, not null]
+  "sso_provider_id" uuid [not null]
+  "domain" text [not null, check: `char_length(domain) > 0`]
+  "created_at" timestamptz
+  "updated_at" timestamptz
+
+  Indexes {
+    sso_provider_id [type: btree, name: "sso_domains_sso_provider_id_idx"]
+  }
+  Note: 'Auth: Manages SSO email address domain mapping to an SSO Identity Provider.'
+}
+
+Table "auth"."saml_providers" {
+  "id" uuid [pk, not null]
+  "sso_provider_id" uuid [not null]
+  "entity_id" text [unique, not null, check: `char_length(entity_id) > 0`]
+  "metadata_xml" text [not null, check: `char_length(metadata_xml) > 0`]
+  "metadata_url" text [check: `(metadata_url = NULL::text) OR (char_length(metadata_url) > 0)`]
+  "attribute_mapping" jsonb
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "name_id_format" text
+  "dedicated_scope" bool
+
+  Indexes {
+    sso_provider_id [type: btree, name: "saml_providers_sso_provider_id_idx"]
+  }
+  Note: 'Auth: Manages SAML Identity Provider connections.'
+}
+
+Table "auth"."saml_relay_states" {
+  "id" uuid [pk, not null]
+  "sso_provider_id" uuid [not null]
+  "request_id" text [not null, check: `char_length(request_id) > 0`]
+  "for_email" text
+  "redirect_to" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "flow_state_id" uuid
+
+  Indexes {
+    created_at [type: btree, name: "saml_relay_states_created_at_idx"]
+    for_email [type: btree, name: "saml_relay_states_for_email_idx"]
+    sso_provider_id [type: btree, name: "saml_relay_states_sso_provider_id_idx"]
+  }
+  Note: 'Auth: Contains SAML Relay State information for each Service Provider initiated login.'
+}
+
+Table "auth"."flow_state" {
+  "id" uuid [pk, not null]
+  "user_id" uuid
+  "auth_code" text
+  "code_challenge_method" auth.code_challenge_method
+  "code_challenge" text
+  "provider_type" text [not null]
+  "provider_access_token" text
+  "provider_refresh_token" text
+  "created_at" timestamptz
+  "updated_at" timestamptz
+  "authentication_method" text [not null]
+  "auth_code_issued_at" timestamptz
+  "invite_token" text
+  "referrer" text
+  "oauth_client_state_id" uuid
+  "linking_target_id" uuid
+  "email_optional" bool [not null, default: false]
+
+  Indexes {
+    created_at [type: btree, name: "flow_state_created_at_idx"]
+    auth_code [type: btree, name: "idx_auth_code"]
+    (user_id, authentication_method) [type: btree, name: "idx_user_id_auth_method"]
+  }
+  Note: 'Stores metadata for all OAuth/SSO login flows'
+}
+
+Table "auth"."one_time_tokens" {
+  "id" uuid [pk, not null]
+  "user_id" uuid [not null]
+  "token_type" auth.one_time_token_type [not null]
+  "token_hash" text [not null, check: `char_length(token_hash) > 0`]
+  "relates_to" text [not null]
+  "created_at" timestamp [not null, default: `now()`]
+  "updated_at" timestamp [not null, default: `now()`]
+  "expires_at" timestamptz
+  "link_token_hash" text
+
+  Indexes {
+    (user_id, token_type) [type: btree, unique, name: "one_time_tokens_user_id_token_type_key"]
+    link_token_hash [type: hash, name: "one_time_tokens_link_token_hash_hash_idx"]
+    relates_to [type: hash, name: "one_time_tokens_relates_to_hash_idx"]
+    token_hash [type: hash, name: "one_time_tokens_token_hash_hash_idx"]
+  }
+}
+
+Table "auth"."oauth_clients" {
+  "id" uuid [pk, not null]
+  "client_secret_hash" text
+  "registration_type" auth.oauth_registration_type [not null]
+  "redirect_uris" text [not null]
+  "grant_types" text [not null]
+  "client_name" text [check: `char_length(client_name) <= 1024`]
+  "client_uri" text [check: `char_length(client_uri) <= 2048`]
+  "logo_uri" text [check: `char_length(logo_uri) <= 2048`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "deleted_at" timestamptz
+  "client_type" auth.oauth_client_type [not null, default: 'confidential']
+  "token_endpoint_auth_method" text [not null, check: `token_endpoint_auth_method = ANY (ARRAY['client_secret_basic'::text, 'client_secret_post'::text, 'none'::text])`]
+
+  Indexes {
+    deleted_at [type: btree, name: "oauth_clients_deleted_at_idx"]
+  }
+}
+
+Table "auth"."oauth_authorizations" {
+  "id" uuid [pk, not null]
+  "authorization_id" text [unique, not null]
+  "client_id" uuid [not null]
+  "user_id" uuid
+  "redirect_uri" text [not null, check: `char_length(redirect_uri) <= 2048`]
+  "scope" text [not null, check: `char_length(scope) <= 4096`]
+  "state" text [check: `char_length(state) <= 4096`]
+  "resource" text [check: `char_length(resource) <= 2048`]
+  "code_challenge" text [check: `char_length(code_challenge) <= 128`]
+  "code_challenge_method" auth.code_challenge_method
+  "response_type" auth.oauth_response_type [not null, default: 'code']
+  "status" auth.oauth_authorization_status [not null, default: 'pending']
+  "authorization_code" text [unique, check: `char_length(authorization_code) <= 255`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "expires_at" timestamptz [not null, default: `(now() + '00:03:00'::interval)`]
+  "approved_at" timestamptz
+  "nonce" text [check: `char_length(nonce) <= 255`]
+
+  Checks {
+    `expires_at > created_at` [name: 'oauth_authorizations_expires_at_future']
+  }
+
+  Indexes {
+    expires_at [type: btree, name: "oauth_auth_pending_exp_idx"]
+  }
+}
+
+Table "auth"."oauth_consents" {
+  "id" uuid [pk, not null]
+  "user_id" uuid [not null]
+  "client_id" uuid [not null]
+  "scopes" text [not null, check: `char_length(scopes) <= 2048`, check: `char_length(TRIM(BOTH FROM scopes)) > 0`]
+  "granted_at" timestamptz [not null, default: `now()`]
+  "revoked_at" timestamptz
+
+  Checks {
+    `(revoked_at IS NULL) OR (revoked_at >= granted_at)` [name: 'oauth_consents_revoked_after_granted']
+  }
+
+  Indexes {
+    (user_id, client_id) [type: btree, unique, name: "oauth_consents_user_client_unique"]
+    client_id [type: btree, name: "oauth_consents_active_client_idx"]
+    (user_id, client_id) [type: btree, name: "oauth_consents_active_user_client_idx"]
+    (user_id, granted_at) [type: btree, name: "oauth_consents_user_order_idx"]
+  }
+}
+
+Table "auth"."oauth_client_states" {
+  "id" uuid [pk, not null]
+  "provider_type" text [not null]
+  "code_verifier" text
+  "created_at" timestamptz [not null]
+
+  Indexes {
+    created_at [type: btree, name: "idx_oauth_client_states_created_at"]
+  }
+  Note: 'Stores OAuth states for third-party provider authentication flows where Supabase acts as the OAuth client.'
+}
+
+Table "auth"."custom_oauth_providers" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "provider_type" text [not null, check: `provider_type = ANY (ARRAY['oauth2'::text, 'oidc'::text])`]
+  "identifier" text [unique, not null, check: `identifier ~ '^[a-z0-9][a-z0-9:-]{0,48}[a-z0-9]$'::text`]
+  "name" text [not null, check: `(char_length(name) >= 1) AND (char_length(name) <= 100)`]
+  "client_id" text [not null, check: `(char_length(client_id) >= 1) AND (char_length(client_id) <= 512)`]
+  "client_secret" text [not null]
+  "acceptable_client_ids" "text[]" [not null, default: '{}']
+  "scopes" "text[]" [not null, default: '{}']
+  "pkce_enabled" bool [not null, default: true]
+  "attribute_mapping" jsonb [not null, default: `'{}'::jsonb`]
+  "authorization_params" jsonb [not null, default: `'{}'::jsonb`]
+  "enabled" bool [not null, default: true]
+  "email_optional" bool [not null, default: false]
+  "issuer" text [check: `(issuer IS NULL) OR ((char_length(issuer) >= 1) AND (char_length(issuer) <= 2048))`]
+  "discovery_url" text [check: `(discovery_url IS NULL) OR (char_length(discovery_url) <= 2048)`]
+  "skip_nonce_check" bool [not null, default: false]
+  "cached_discovery" jsonb
+  "discovery_cached_at" timestamptz
+  "authorization_url" text [check: `(authorization_url IS NULL) OR (authorization_url ~~ 'https://%'::text)`, check: `(authorization_url IS NULL) OR (char_length(authorization_url) <= 2048)`]
+  "token_url" text [check: `(token_url IS NULL) OR (token_url ~~ 'https://%'::text)`, check: `(token_url IS NULL) OR (char_length(token_url) <= 2048)`]
+  "userinfo_url" text [check: `(userinfo_url IS NULL) OR (userinfo_url ~~ 'https://%'::text)`, check: `(userinfo_url IS NULL) OR (char_length(userinfo_url) <= 2048)`]
+  "jwks_uri" text [check: `(jwks_uri IS NULL) OR (jwks_uri ~~ 'https://%'::text)`, check: `(jwks_uri IS NULL) OR (char_length(jwks_uri) <= 2048)`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "custom_claims_allowlist" "text[]" [not null, default: '{}']
+
+  Checks {
+    `(provider_type <> 'oidc'::text) OR (issuer IS NOT NULL)` [name: 'custom_oauth_providers_oidc_requires_issuer']
+    `(provider_type <> 'oidc'::text) OR (issuer IS NULL) OR (issuer ~~ 'https://%'::text)` [name: 'custom_oauth_providers_oidc_issuer_https']
+    `(provider_type <> 'oidc'::text) OR (discovery_url IS NULL) OR (discovery_url ~~ 'https://%'::text)` [name: 'custom_oauth_providers_oidc_discovery_url_https']
+    `(provider_type <> 'oauth2'::text) OR ((authorization_url IS NOT NULL) AND (token_url IS NOT NULL) AND (userinfo_url IS NOT NULL))` [name: 'custom_oauth_providers_oauth2_requires_endpoints']
+  }
+
+  Indexes {
+    created_at [type: btree, name: "custom_oauth_providers_created_at_idx"]
+    enabled [type: btree, name: "custom_oauth_providers_enabled_idx"]
+    identifier [type: btree, name: "custom_oauth_providers_identifier_idx"]
+    provider_type [type: btree, name: "custom_oauth_providers_provider_type_idx"]
+  }
+}
+
+Table "auth"."webauthn_credentials" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "user_id" uuid [not null]
+  "credential_id" bytea [unique, not null]
+  "public_key" bytea [not null]
+  "attestation_type" text [not null, default: '']
+  "aaguid" uuid
+  "sign_count" int8 [not null, default: 0]
+  "transports" jsonb [not null, default: `'[]'::jsonb`]
+  "backup_eligible" bool [not null, default: false]
+  "backed_up" bool [not null, default: false]
+  "friendly_name" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+
+  Indexes {
+    user_id [type: btree, name: "webauthn_credentials_user_id_idx"]
+  }
+}
+
+Table "auth"."webauthn_challenges" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "user_id" uuid
+  "challenge_type" text [not null, check: `challenge_type = ANY (ARRAY['signup'::text, 'registration'::text, 'authentication'::text])`]
+  "session_data" jsonb [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "expires_at" timestamptz [not null]
+
+  Indexes {
+    expires_at [type: btree, name: "webauthn_challenges_expires_at_idx"]
+    user_id [type: btree, name: "webauthn_challenges_user_id_idx"]
+  }
+}
+
+Table "auth"."scim_users" {
+  "id" uuid [pk, not null]
+  "sso_provider_id" uuid [not null]
+  "user_id" uuid
+  "resource" jsonb [not null]
+  "user_name" text [not null]
+  "external_id" text
+  "active" bool [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "deleted_at" timestamptz
+
+  Indexes {
+    (sso_provider_id, external_id) [type: btree, unique, name: "scim_users_external_id_key"]
+    (sso_provider_id, user_name) [type: btree, unique, name: "scim_users_user_name_key"]
+    (sso_provider_id, created_at, id) [type: btree, name: "scim_users_created_at_idx"]
+    deleted_at [type: btree, name: "scim_users_deleted_at_idx"]
+    (sso_provider_id, id) [type: btree, name: "scim_users_id_idx"]
+    sso_provider_id [type: btree, name: "scim_users_sso_provider_id_idx"]
+    (sso_provider_id, updated_at, id) [type: btree, name: "scim_users_updated_at_idx"]
+    user_id [type: btree, name: "scim_users_user_id_idx"]
+    (sso_provider_id, user_name, id) [type: btree, name: "scim_users_user_name_idx"]
+  }
+}
+
+Table "auth"."scim_tokens" {
+  "id" uuid [pk, not null]
+  "sso_provider_id" uuid [not null]
+  "token_hash" text [unique, not null, check: `token_hash ~ '^[0-9a-f]{64}$'::text`]
+  "prefix" text [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "expires_at" timestamptz
+  "revoked_at" timestamptz
+  "last_used_at" timestamptz
+
+  Checks {
+    `(expires_at IS NULL) OR (expires_at > created_at)` [name: 'scim_tokens_expires_at_future']
+    `(revoked_at IS NULL) OR (revoked_at >= created_at)` [name: 'scim_tokens_revoked_after_created']
+  }
+
+  Indexes {
+    expires_at [type: btree, name: "scim_tokens_expires_at_idx"]
+    revoked_at [type: btree, name: "scim_tokens_revoked_at_idx"]
+    sso_provider_id [type: btree, name: "scim_tokens_sso_provider_id_idx"]
+  }
+}
+
+Table "auth"."mfa_recovery_code_sets" {
+  "id" uuid [pk, not null]
+  "user_id" uuid [unique, not null]
+  "mfa_factor_id" uuid [unique, not null]
+  "failed_verification_count" int4 [not null, check: `failed_verification_count >= 0`, default: 0]
+  "verification_locked_until" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
+Table "auth"."mfa_recovery_codes" {
+  "id" uuid [pk, not null]
+  "mfa_recovery_code_set_id" uuid [not null]
+  "code_hash" text [not null]
+  "consumed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    mfa_recovery_code_set_id [type: btree, name: "mfa_recovery_codes_set_id_idx"]
+  }
+}
+
+Table "schedule" {
+  "schedule_id" text [pk, not null, increment]
+  "employee_id" text
+  "week" text
+  "outlet" varchar(255)
+  "position" varchar(255)
+  "time_in" time
+  "time_out" time
+  "is_finalized" bool [default: false]
+  "break_time" text
+  "monday" text
+  "tuesday" text
+  "wednesday" text
+  "thursday" text
+  "friday" text
+  "saturday" text
+  "sunday" text
+  "status" text
+  "confirmed_by" text
+  "confirmed_at" timestamptz
+  "declined_by" text
+  "declined_at" timestamptz
+}
+
+Table "applicant_profiles" {
+  "auth_user_id" uuid [pk, not null]
+  "profile" jsonb [not null, check: `COALESCE((profile ->> 'birthdate'::text), ''::text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text`, check: `(length(TRIM(BOTH FROM COALESCE((profile ->> 'firstName'::text), ''::text))) > 0) AND (length(TRIM(BOTH FROM COALESCE((profile ->> 'lastName'::text), ''::text))) > 0)`, check: `octet_length((profile)::text) <= 100000`, default: `'{}'::jsonb`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "profile_photo" text [check: `(profile_photo IS NULL) OR ((length(profile_photo) <= 196608) AND (profile_photo ~ '^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$'::text))`]
+}
+
+Table "applicants" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "applicant_id" text [unique, not null]
+  "first_name" text [not null]
+  "middle_name" text
+  "last_name" text [not null]
+  "suffix" text [not null]
+  "email" text [not null]
+  "cover_letter" text [not null]
+  "phone_number" text
+  "address" text
+  "position_applied" text [not null]
+  "status" text [not null, default: 'Submitted']
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+  "name" text
+  "gender" text
+  "civil_status" text
+  "birthdate" date
+  "birthplace" text
+  "height" text
+  "weight" text
+  "education" text
+  "experience" text
+  "tin" text
+  "sss" text
+  "philhealth" text
+  "pagibig" text
+  "emergency_contact" text
+  "resume_file_name" text
+  "resume_file_data" text
+  "supporting_documents" jsonb
+  "supporting_document_files" jsonb
+  "has_resume" bool [default: false]
+  "has_birth_cert" bool [default: false]
+  "has_tor" bool [default: false]
+  "has_med_cert" bool [default: false]
+  "requirements_note" text
+  "custom_requirements" jsonb [default: `'[]'::jsonb`]
+  "interview_date" text
+  "interview_time" time
+  "interview_location" text
+  "interview_notes" text
+  "scheduled_by" text
+  "hiring_decision" text
+  "interview_feedback" text
+  "is_archived" bool [not null, default: false]
+  "archived_at" timestamptz
+  "archived_by" text
+  "archive_reason" text
+  "auth_user_id" uuid
+  "employee_setup_email_sent_at" timestamptz
+
+  Indexes {
+    (is_archived, status, created_at) [type: btree, name: "applicants_archive_status_created_at_idx"]
+    auth_user_id [type: btree, name: "applicants_auth_user_id_idx"]
+  }
+}
+
+Table "attendance_import_batches" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "batch_id" text [unique, not null, default: `('BATCH-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "file_name" text
+  "file_type" text
+  "source" text [not null, check: `source = ANY (ARRAY['Biometric Import'::text, 'Manual Encoding'::text, 'Logbook Encoding'::text])`, default: 'Biometric Import']
+  "imported_by_user_id" text
+  "total_rows" int4 [default: 0]
+  "successful_rows" int4 [default: 0]
+  "failed_rows" int4 [default: 0]
+  "status" text [not null, check: `status = ANY (ARRAY['Processing'::text, 'Completed'::text, 'Failed'::text, 'Partially Completed'::text])`, default: 'Completed']
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+
+  Indexes {
+    created_at [type: btree, name: "attendance_import_batches_created_at_idx"]
+  }
+}
+
+Table "attendance_logs" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "log_id" text [unique, not null, default: `('ATT-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "batch_id" text
+  "employee_id" text
+  "biometric_user_id" text
+  "employee_name" text
+  "attendance_date" date [not null]
+  "time_in" time
+  "time_out" time
+  "raw_time_in" text
+  "raw_time_out" text
+  "raw_data" jsonb [default: `'{}'::jsonb`]
+  "schedule_id" text
+  "is_matched_to_schedule" bool [default: false]
+  "total_hours" numeric(6,2) [default: 0]
+  "late_minutes" int4 [default: 0]
+  "undertime_minutes" int4 [default: 0]
+  "overtime_minutes" int4 [default: 0]
+  "is_late" bool [default: false]
+  "is_undertime" bool [default: false]
+  "is_overtime" bool [default: false]
+  "is_absent" bool [default: false]
+  "is_incomplete" bool [default: false]
+  "source" text [not null, check: `source = ANY (ARRAY['Biometric Import'::text, 'Manual Encoding'::text, 'Logbook Encoding'::text])`, default: 'Biometric Import']
+  "validation_status" text [not null, check: `validation_status = ANY (ARRAY['Unprocessed'::text, 'Validated'::text, 'Needs Review'::text, 'Invalid'::text, 'Corrected'::text])`, default: 'Unprocessed']
+  "encoded_by_user_id" text
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+  "work_intervals" jsonb [check: `(work_intervals IS NULL) OR (jsonb_typeof(work_intervals) = 'array'::text)`]
+  "reviewed_by_name" text
+  "reviewed_at" timestamptz
+
+  Indexes {
+    (employee_id, attendance_date) [type: btree, unique, name: "attendance_logs_employee_date_key"]
+    attendance_date [type: btree, name: "attendance_logs_attendance_date_idx"]
+    batch_id [type: btree, name: "attendance_logs_batch_id_idx"]
+    biometric_user_id [type: btree, name: "attendance_logs_biometric_user_id_idx"]
+    employee_id [type: btree, name: "attendance_logs_employee_id_idx"]
+    source [type: btree, name: "attendance_logs_source_idx"]
+    validation_status [type: btree, name: "attendance_logs_validation_status_idx"]
+  }
+}
+
+Table "attendance_summaries" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "summary_id" text [unique, not null, default: `('SUM-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "employee_id" text [not null]
+  "employee_name" text
+  "position" text
+  "outlet" text
+  "period_start" date [not null]
+  "period_end" date [not null]
+  "period_type" text [not null, check: `period_type = ANY (ARRAY['Daily'::text, 'Weekly'::text, 'Cutoff'::text, 'Monthly'::text, 'Custom'::text])`, default: 'Custom']
+  "total_attendance_days" int4 [default: 0]
+  "total_present_days" int4 [default: 0]
+  "total_absent_days" int4 [default: 0]
+  "total_incomplete_days" int4 [default: 0]
+  "total_late_count" int4 [default: 0]
+  "total_undertime_count" int4 [default: 0]
+  "total_overtime_count" int4 [default: 0]
+  "total_late_minutes" int4 [default: 0]
+  "total_undertime_minutes" int4 [default: 0]
+  "total_overtime_minutes" int4 [default: 0]
+  "total_work_hours" numeric(8,2) [default: 0]
+  "regular_hours" numeric(8,2) [default: 0]
+  "overtime_hours" numeric(8,2) [default: 0]
+  "source_log_ids" jsonb [default: `'[]'::jsonb`]
+  "status" text [not null, check: `status = ANY (ARRAY['Draft'::text, 'Reviewed'::text, 'Approved'::text, 'Exported'::text])`, default: 'Draft']
+  "generated_by_user_id" text
+  "reviewed_by_user_id" text
+  "reviewed_at" timestamptz
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Checks {
+    `period_end >= period_start` [name: 'attendance_summaries_period_check']
+  }
+
+  Indexes {
+    (employee_id, period_start, period_end) [type: btree, unique, name: "attendance_summaries_unique_period"]
+    employee_id [type: btree, name: "attendance_summaries_employee_id_idx"]
+    outlet [type: btree, name: "attendance_summaries_outlet_idx"]
+    period_end [type: btree, name: "attendance_summaries_period_end_idx"]
+    period_start [type: btree, name: "attendance_summaries_period_start_idx"]
+    status [type: btree, name: "attendance_summaries_status_idx"]
+  }
+}
+
+Table "dss_result_items" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "item_id" text [unique, not null, default: `('DSSITEM-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "result_id" text [not null]
+  "evaluation_id" text [not null]
+  "employee_id" text [not null]
+  "employee_name" text
+  "position" text
+  "outlet" text
+  "final_weighted_score" numeric(8,2) [not null, default: 0]
+  "rating_label" text
+  "rank_no" int4 [not null]
+  "recommendation" text
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Indexes {
+    (result_id, evaluation_id) [type: btree, unique, name: "dss_result_items_unique_evaluation"]
+    (result_id, rank_no) [type: btree, unique, name: "dss_result_items_unique_rank"]
+    employee_id [type: btree, name: "dss_result_items_employee_id_idx"]
+    rank_no [type: btree, name: "dss_result_items_rank_no_idx"]
+    result_id [type: btree, name: "dss_result_items_result_id_idx"]
+  }
+}
+
+Table "dss_results" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "result_id" text [unique, not null, default: `('DSS-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "result_period_start" date [not null]
+  "result_period_end" date [not null]
+  "result_period_label" text
+  "total_employees" int4 [default: 0]
+  "highest_score" numeric(8,2) [default: 0]
+  "average_score" numeric(8,2) [default: 0]
+  "lowest_score" numeric(8,2) [default: 0]
+  "top_employee_id" text
+  "top_employee_name" text
+  "status" text [not null, check: `status = ANY (ARRAY['Draft'::text, 'Reviewed'::text, 'Approved'::text, 'Exported'::text])`, default: 'Draft']
+  "generated_by_user_id" text
+  "generated_at" timestamptz [default: `now()`]
+  "approved_by_user_id" text
+  "approved_at" timestamptz
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Checks {
+    `result_period_end >= result_period_start` [name: 'dss_results_period_check']
+  }
+
+  Indexes {
+    (result_period_start, result_period_end) [type: btree, unique, name: "dss_results_unique_period"]
+    result_period_end [type: btree, name: "dss_results_period_end_idx"]
+    result_period_start [type: btree, name: "dss_results_period_start_idx"]
+    status [type: btree, name: "dss_results_status_idx"]
+  }
+}
+
+Table "employee_account_requests" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "auth_user_id" uuid [unique, not null]
+  "employee_id" text [unique, not null]
+  "email" text [not null]
+  "full_name" text [not null]
+  "status" text [not null, check: `status = ANY (ARRAY['Pending'::text, 'Approved'::text, 'Rejected'::text])`, default: 'Pending']
+  "created_at" timestamptz [not null, default: `now()`]
+  "reviewed_by" uuid
+  "reviewed_at" timestamptz
+  "reviewer_note" text
+
+  Indexes {
+    (status, created_at) [type: btree, name: "employee_account_requests_status_created_idx"]
+  }
+}
+
+Table "employee_evaluation_scores" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "score_id" text [unique, not null, default: `('SCORE-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "evaluation_id" text [not null]
+  "criteria_id" text [not null]
+  "criteria_name" text
+  "criteria_weight" numeric(5,2) [not null, check: `(criteria_weight >= (0)::numeric) AND (criteria_weight <= (100)::numeric)`, default: 0]
+  "max_score" numeric(6,2) [not null, default: 100]
+  "raw_score" numeric(6,2) [not null, check: `raw_score >= (0)::numeric`, default: 0]
+  "weighted_score" numeric(8,2) [not null, default: 0]
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Indexes {
+    (evaluation_id, criteria_id) [type: btree, unique, name: "employee_evaluation_scores_unique_criteria"]
+    criteria_id [type: btree, name: "employee_evaluation_scores_criteria_id_idx"]
+    evaluation_id [type: btree, name: "employee_evaluation_scores_evaluation_id_idx"]
+  }
+}
+
+Table "employee_evaluations" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "evaluation_id" text [unique, not null, default: `('EVAL-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "employee_id" text [not null]
+  "employee_name" text
+  "position" text
+  "outlet" text
+  "evaluation_period_start" date [not null]
+  "evaluation_period_end" date [not null]
+  "evaluation_period_label" text
+  "evaluator_user_id" text
+  "evaluator_name" text
+  "evaluator_role" text
+  "total_raw_score" numeric(8,2) [default: 0]
+  "final_weighted_score" numeric(8,2) [default: 0]
+  "rating_label" text
+  "status" text [not null, check: `status = ANY (ARRAY['Draft'::text, 'Submitted'::text, 'Reviewed'::text, 'Approved'::text, 'Returned'::text, 'Cancelled'::text])`, default: 'Draft']
+  "remarks" text
+  "submitted_at" timestamptz
+  "approved_by_user_id" text
+  "approved_at" timestamptz
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Checks {
+    `evaluation_period_end >= evaluation_period_start` [name: 'employee_evaluations_period_check']
+  }
+
+  Indexes {
+    (employee_id, evaluation_period_start, evaluation_period_end) [type: btree, unique, name: "employee_evaluations_unique_period"]
+    employee_id [type: btree, name: "employee_evaluations_employee_id_idx"]
+    evaluation_period_end [type: btree, name: "employee_evaluations_period_end_idx"]
+    evaluation_period_start [type: btree, name: "employee_evaluations_period_start_idx"]
+    status [type: btree, name: "employee_evaluations_status_idx"]
+  }
+}
+
+Table "employee_leave_balances" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "employee_id" text [not null]
+  "leave_type" text [not null]
+  "available" numeric(10,3) [not null, check: `available >= (0)::numeric`, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (employee_id, leave_type) [type: btree, unique, name: "employee_leave_balances_employee_id_leave_type_key"]
+    employee_id [type: btree, name: "employee_leave_balances_employee_id_idx"]
+  }
+}
+
+Table "employee_requests" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "request_id" text [unique, not null, default: `('REQ-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "employee_id" text [not null]
+  "request_type" text [not null, check: `request_type = ANY (ARRAY['Leave'::text, 'Overtime'::text, 'Undertime'::text])`]
+  "leave_type" text
+  "start_date" date [not null]
+  "end_date" date [not null]
+  "start_time" time
+  "end_time" time
+  "total_days" numeric(6,2) [default: 0]
+  "total_hours" numeric(6,2) [default: 0]
+  "reason" text [not null]
+  "attachment_files" jsonb [default: `'[]'::jsonb`]
+  "status" text [not null, check: `status = ANY (ARRAY['Pending'::text, 'Supervisor Approved'::text, 'Approved'::text, 'Disapproved'::text, 'Rejected'::text, 'Cancelled'::text])`, default: 'Pending']
+  "reviewed_by_user_id" text
+  "reviewed_at" timestamptz
+  "reviewer_remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+  "supervisor_status" text [check: `(supervisor_status IS NULL) OR (supervisor_status = ANY (ARRAY['Pending'::text, 'Approved'::text, 'Disapproved'::text]))`, default: 'Pending']
+  "supervisor_note" text
+  "supervisor_user_id" text
+  "supervisor_name" text
+  "supervisor_reviewed_at" timestamptz
+  "hr_status" text [check: `(hr_status IS NULL) OR (hr_status = ANY (ARRAY['Pending'::text, 'Approved'::text, 'Disapproved'::text]))`, default: 'Pending']
+  "hr_note" text
+  "hr_user_id" text
+  "hr_name" text
+  "hr_reviewed_at" timestamptz
+
+  Checks {
+    `end_date >= start_date` [name: 'employee_requests_date_check']
+    `(request_type <> 'Leave'::text) OR (leave_type IS NOT NULL)` [name: 'employee_requests_leave_type_check']
+  }
+
+  Indexes {
+    created_at [type: btree, name: "employee_requests_created_at_idx"]
+    employee_id [type: btree, name: "employee_requests_employee_id_idx"]
+    hr_status [type: btree, name: "employee_requests_hr_status_idx"]
+    request_type [type: btree, name: "employee_requests_request_type_idx"]
+    start_date [type: btree, name: "employee_requests_start_date_idx"]
+    status [type: btree, name: "employee_requests_status_idx"]
+    supervisor_status [type: btree, name: "employee_requests_supervisor_status_idx"]
+  }
+}
+
+Table "employees" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "employee_id" text [unique, not null]
+  "first_name" text [not null]
+  "middle_name" text
+  "last_name" text [not null]
+  "suffix" text [default: '']
+  "email" text [unique]
+  "phone_number" text
+  "address" text
+  "gender" text
+  "civil_status" text
+  "birthdate" date
+  "birthplace" text
+  "department" text
+  "outlet" text
+  "position" text
+  "employment_type" text
+  "status" text [default: 'Active']
+  "hire_date" date
+  "salary" numeric
+  "education" text
+  "experience" text
+  "tin" text
+  "sss" text
+  "philhealth" text
+  "pagibig" text
+  "emergency_contact" text
+  "created_at" timestamptz [default: `now()`]
+  "documents" jsonb
+  "applicant_id" text [unique]
+  "biometric_user_id" text [unique]
+  "profile_photo" text [check: `(profile_photo IS NULL) OR ((length(profile_photo) <= 196608) AND (profile_photo ~ '^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$'::text))`]
+}
+
+Table "evaluation_criteria" {
+  "criteria_name" varchar(255)
+  "weight" numeric(5,2)
+  "criteria_id" text [pk, not null, default: `('CRIT-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "description" text
+  "category" text
+  "max_score" numeric(6,2) [default: 100]
+  "is_active" bool [not null, default: true]
+  "created_by_user_id" text
+  "updated_by_user_id" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Indexes {
+    category [type: btree, name: "evaluation_criteria_category_idx"]
+    is_active [type: btree, name: "evaluation_criteria_is_active_idx"]
+  }
+}
+
+Table "generated_report_history" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "report_title" text [not null, check: `(length(btrim(report_title)) >= 1) AND (length(btrim(report_title)) <= 120)`]
+  "report_type" text [not null, check: `(length(btrim(report_type)) >= 1) AND (length(btrim(report_type)) <= 60)`]
+  "period_start" date
+  "period_end" date
+  "file_name" text [not null, check: `file_name ~ '\.pdf$'::text`]
+  "storage_path" text [unique, not null]
+  "record_count" int4 [not null, check: `record_count >= 0`, default: 0]
+  "prepared_by" text [not null, check: `(length(btrim(prepared_by)) >= 1) AND (length(btrim(prepared_by)) <= 180)`]
+  "created_by" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Checks {
+    `(period_start IS NULL) OR (period_end IS NULL) OR (period_end >= period_start)` [name: 'generated_report_period_check']
+  }
+
+  Indexes {
+    created_at [type: btree, name: "generated_report_history_created_at_idx"]
+  }
+}
+
+Table "hr_analytics_demo_records" {
+  "seed_key" text [pk, not null]
+  "record_type" text [not null, check: `record_type = ANY (ARRAY['employee_outlet'::text, 'attendance'::text, 'performance'::text, 'leave_request'::text, 'recruitment'::text])`]
+  "employee_id" text
+  "outlet" text [not null]
+  "record_date" date [not null]
+  "status" text
+  "score" numeric(5,2) [check: `(score IS NULL) OR ((score >= (0)::numeric) AND (score <= (100)::numeric))`]
+  "is_late" bool [not null, default: false]
+  "is_absent" bool [not null, default: false]
+  "late_minutes" int4 [not null, check: `late_minutes >= 0`, default: 0]
+  "request_type" text
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    employee_id [type: btree, name: "hr_analytics_demo_employee_idx"]
+    (record_type, record_date) [type: btree, name: "hr_analytics_demo_type_date_idx"]
+  }
+}
+
+Table "job_postings" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "title" text [not null]
+  "department" text
+  "location" text
+  "employment_type" text [default: 'Full-Time']
+  "salary_range" text
+  "description" text
+  "qualifications" text
+  "responsibilities" text
+  "is_active" bool [default: true]
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+}
+
+Table "leave_types" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "name" text [not null, check: `(length(TRIM(BOTH FROM name)) >= 1) AND (length(TRIM(BOTH FROM name)) <= 100)`]
+  "description" text [not null, check: `length(description) <= 1000`, default: '']
+  "is_active" bool [not null, default: true]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "notifications" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "recipient_role" text
+  "recipient_employee_id" text
+  "title" text [not null]
+  "message" text [not null]
+  "type" text
+  "is_read" bool [default: false]
+  "created_at" timestamptz [default: `now()`]
+  "dedupe_key" text [unique]
+}
+
+Table "payroll_items" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "payroll_item_id" text [unique, not null, default: `('PAYITEM-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "payroll_id" text [not null]
+  "attendance_summary_id" text
+  "employee_id" text [not null]
+  "employee_name" text
+  "position" text
+  "outlet" text
+  "salary_rate" numeric(12,2) [default: 0]
+  "rate_type" text [not null, check: `rate_type = ANY (ARRAY['Monthly'::text, 'Daily'::text, 'Hourly'::text])`, default: 'Monthly']
+  "total_work_hours" numeric(10,2) [default: 0]
+  "regular_hours" numeric(10,2) [default: 0]
+  "overtime_hours" numeric(10,2) [default: 0]
+  "total_late_minutes" int4 [default: 0]
+  "total_undertime_minutes" int4 [default: 0]
+  "total_absent_days" int4 [default: 0]
+  "total_incomplete_days" int4 [default: 0]
+  "basic_pay" numeric(12,2) [default: 0]
+  "overtime_pay" numeric(12,2) [default: 0]
+  "late_deduction" numeric(12,2) [default: 0]
+  "undertime_deduction" numeric(12,2) [default: 0]
+  "absence_deduction" numeric(12,2) [default: 0]
+  "other_deductions" numeric(12,2) [default: 0]
+  "gross_pay" numeric(12,2) [default: 0]
+  "total_deductions" numeric(12,2) [default: 0]
+  "net_pay" numeric(12,2) [default: 0]
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+  "payslip_details" jsonb [not null, default: `'{}'::jsonb`]
+
+  Indexes {
+    employee_id [type: btree, name: "payroll_items_employee_id_idx"]
+    outlet [type: btree, name: "payroll_items_outlet_idx"]
+    payroll_id [type: btree, name: "payroll_items_payroll_id_idx"]
+    payslip_details [type: gin, name: "payroll_items_payslip_details_gin_idx"]
+  }
+}
+
+Table "payroll_premium_rates" {
+  "id" int2 [pk, not null, check: `id = 1`, default: 1]
+  "revision" int4 [not null, check: `revision >= 0`, default: 0]
+  "nsd_percent" numeric [check: `(nsd_percent >= (0)::numeric) AND (nsd_percent < 'Infinity'::numeric)`]
+  "regular_holiday_percent" numeric [check: `(regular_holiday_percent >= (0)::numeric) AND (regular_holiday_percent < 'Infinity'::numeric)`]
+  "special_holiday_percent" numeric [check: `(special_holiday_percent >= (0)::numeric) AND (special_holiday_percent < 'Infinity'::numeric)`]
+  "sil_percent" numeric [check: `(sil_percent >= (0)::numeric) AND (sil_percent < 'Infinity'::numeric)`]
+  "holidays" jsonb [not null, check: `jsonb_typeof(holidays) = 'array'::text`, default: `'[]'::jsonb`]
+}
+
+Table "payroll_summaries" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "payroll_id" text [unique, not null, default: `('PAY-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "period_start" date [not null]
+  "period_end" date [not null]
+  "cutoff_label" text
+  "total_employees" int4 [default: 0]
+  "total_regular_hours" numeric(10,2) [default: 0]
+  "total_overtime_hours" numeric(10,2) [default: 0]
+  "total_late_minutes" int4 [default: 0]
+  "total_undertime_minutes" int4 [default: 0]
+  "total_gross_pay" numeric(12,2) [default: 0]
+  "total_deductions" numeric(12,2) [default: 0]
+  "total_overtime_pay" numeric(12,2) [default: 0]
+  "total_net_pay" numeric(12,2) [default: 0]
+  "status" text [not null, check: `status = ANY (ARRAY['Draft'::text, 'Reviewed'::text, 'Approved'::text, 'Endorsed'::text, 'Exported'::text])`, default: 'Draft']
+  "prepared_by_user_id" text
+  "reviewed_by_user_id" text
+  "reviewed_at" timestamptz
+  "endorsed_to" text [default: 'Accounting and Finance Personnel']
+  "endorsed_at" timestamptz
+  "remarks" text
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Checks {
+    `period_end >= period_start` [name: 'payroll_summaries_period_check']
+  }
+
+  Indexes {
+    (period_start, period_end) [type: btree, unique, name: "payroll_summaries_unique_period"]
+    period_end [type: btree, name: "payroll_summaries_period_end_idx"]
+    period_start [type: btree, name: "payroll_summaries_period_start_idx"]
+    status [type: btree, name: "payroll_summaries_status_idx"]
+  }
+}
+
+Table "schedule_swap_requests" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "request_id" text [unique, not null, default: `('SWAP-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "requester_employee_id" text [not null]
+  "recipient_employee_id" text [not null]
+  "requester_schedule_id" text [not null]
+  "recipient_schedule_id" text [not null]
+  "swap_day" text [not null, check: `swap_day = ANY (ARRAY['monday'::text, 'tuesday'::text, 'wednesday'::text, 'thursday'::text, 'friday'::text, 'saturday'::text, 'sunday'::text])`]
+  "week" text [not null]
+  "requester_outlet" text
+  "recipient_outlet" text
+  "requester_shift" text [not null]
+  "recipient_shift" text [not null]
+  "reason" text [not null, default: '']
+  "status" text [not null, check: `status = ANY (ARRAY['Pending Coworker'::text, 'Pending HR'::text, 'Approved'::text, 'Rejected'::text, 'Cancelled'::text])`, default: 'Pending Coworker']
+  "recipient_accepted" bool
+  "recipient_note" text
+  "recipient_responded_at" timestamptz
+  "hr_user_id" uuid
+  "hr_note" text
+  "hr_reviewed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Checks {
+    `requester_employee_id <> recipient_employee_id` [name: 'schedule_swap_distinct_employees']
+    `requester_schedule_id <> recipient_schedule_id` [name: 'schedule_swap_distinct_schedules']
+  }
+
+  Indexes {
+    (recipient_employee_id, status) [type: btree, name: "schedule_swap_recipient_status_idx"]
+    (requester_employee_id, status) [type: btree, name: "schedule_swap_requester_status_idx"]
+  }
+}
+
+Table "system_logs" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "log_id" text [unique, not null, default: `('LOG-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))`]
+  "user_id" text
+  "user_name" text
+  "user_role" text
+  "action" text [not null]
+  "module" text [not null]
+  "record_id" text
+  "record_table" text
+  "description" text
+  "old_data" jsonb
+  "new_data" jsonb
+  "ip_address" text
+  "user_agent" text
+  "created_at" timestamptz [default: `now()`]
+
+  Indexes {
+    action [type: btree, name: "system_logs_action_idx"]
+    created_at [type: btree, name: "system_logs_created_at_idx"]
+    module [type: btree, name: "system_logs_module_idx"]
+    record_table [type: btree, name: "system_logs_record_table_idx"]
+    user_id [type: btree, name: "system_logs_user_id_idx"]
+    user_role [type: btree, name: "system_logs_user_role_idx"]
+  }
+}
+
+Table "user_accounts" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`]
+  "applicant_id" text [unique]
+  "first_name" text
+  "middle_name" text
+  "last_name" text
+  "full_name" text
+  "email" text [unique]
+  "password" text
+  "role" text [check: `role = ANY (ARRAY['hr_admin'::text, 'general_manager'::text, 'accounting_finance'::text, 'supervisor'::text, 'employee'::text])`, default: 'employee']
+  "outlet" text
+  "is_active" bool [default: true]
+  "created_at" timestamptz [default: `now()`]
+  "user_id" text [unique]
+  "employee_id" text [unique]
+  "suffix" text
+  "auth_user_id" uuid [unique]
+}
+
+Ref "identities_user_id_fkey":"auth"."users"."id" <? "auth"."identities"."user_id" [delete: cascade]
+
+Ref "mfa_amr_claims_session_id_fkey":"auth"."sessions"."id" <? "auth"."mfa_amr_claims"."session_id" [delete: cascade]
+
+Ref "mfa_challenges_auth_factor_id_fkey":"auth"."mfa_factors"."id" <? "auth"."mfa_challenges"."factor_id" [delete: cascade]
+
+Ref "mfa_factors_user_id_fkey":"auth"."users"."id" <? "auth"."mfa_factors"."user_id" [delete: cascade]
+
+Ref "mfa_recovery_code_sets_mfa_factor_id_fkey":"auth"."mfa_factors"."id" <? "auth"."mfa_recovery_code_sets"."mfa_factor_id" [delete: cascade]
+
+Ref "mfa_recovery_code_sets_user_id_fkey":"auth"."users"."id" <? "auth"."mfa_recovery_code_sets"."user_id" [delete: cascade]
+
+Ref "mfa_recovery_codes_mfa_recovery_code_set_id_fkey":"auth"."mfa_recovery_code_sets"."id" <? "auth"."mfa_recovery_codes"."mfa_recovery_code_set_id" [delete: cascade]
+
+Ref "oauth_authorizations_client_id_fkey":"auth"."oauth_clients"."id" <? "auth"."oauth_authorizations"."client_id" [delete: cascade]
+
+Ref "oauth_authorizations_user_id_fkey":"auth"."users"."id" ?<? "auth"."oauth_authorizations"."user_id" [delete: cascade]
+
+Ref "oauth_consents_client_id_fkey":"auth"."oauth_clients"."id" <? "auth"."oauth_consents"."client_id" [delete: cascade]
+
+Ref "oauth_consents_user_id_fkey":"auth"."users"."id" <? "auth"."oauth_consents"."user_id" [delete: cascade]
+
+Ref "one_time_tokens_user_id_fkey":"auth"."users"."id" <? "auth"."one_time_tokens"."user_id" [delete: cascade]
+
+Ref "refresh_tokens_session_id_fkey":"auth"."sessions"."id" ?<? "auth"."refresh_tokens"."session_id" [delete: cascade]
+
+Ref "saml_providers_sso_provider_id_fkey":"auth"."sso_providers"."id" <? "auth"."saml_providers"."sso_provider_id" [delete: cascade]
+
+Ref "saml_relay_states_flow_state_id_fkey":"auth"."flow_state"."id" ?<? "auth"."saml_relay_states"."flow_state_id" [delete: cascade]
+
+Ref "saml_relay_states_sso_provider_id_fkey":"auth"."sso_providers"."id" <? "auth"."saml_relay_states"."sso_provider_id" [delete: cascade]
+
+Ref "scim_tokens_sso_provider_id_fkey":"auth"."sso_providers"."id" <? "auth"."scim_tokens"."sso_provider_id" [delete: cascade]
+
+Ref "scim_users_sso_provider_id_fkey":"auth"."sso_providers"."id" <? "auth"."scim_users"."sso_provider_id" [delete: cascade]
+
+Ref "scim_users_user_id_fkey":"auth"."users"."id" ?<? "auth"."scim_users"."user_id" [delete: set null]
+
+Ref "sessions_oauth_client_id_fkey":"auth"."oauth_clients"."id" ?<? "auth"."sessions"."oauth_client_id" [delete: cascade]
+
+Ref "sessions_user_id_fkey":"auth"."users"."id" <? "auth"."sessions"."user_id" [delete: cascade]
+
+Ref "sso_domains_sso_provider_id_fkey":"auth"."sso_providers"."id" <? "auth"."sso_domains"."sso_provider_id" [delete: cascade]
+
+Ref "webauthn_challenges_user_id_fkey":"auth"."users"."id" ?<? "auth"."webauthn_challenges"."user_id" [delete: cascade]
+
+Ref "webauthn_credentials_user_id_fkey":"auth"."users"."id" <? "auth"."webauthn_credentials"."user_id" [delete: cascade]
+
+Ref "applicant_profiles_auth_user_id_fkey":"auth"."users"."id" <? "applicant_profiles"."auth_user_id" [delete: cascade]
+
+Ref "applicants_auth_user_id_fkey":"auth"."users"."id" ?<? "applicants"."auth_user_id"
+
+Ref "attendance_import_batches_imported_by_fkey":"user_accounts"."user_id" ?<? "attendance_import_batches"."imported_by_user_id" [delete: set null]
+
+Ref "attendance_logs_batch_id_fkey":"attendance_import_batches"."batch_id" ?<? "attendance_logs"."batch_id" [delete: set null]
+
+Ref "attendance_logs_employee_id_fkey":"employees"."employee_id" ?<? "attendance_logs"."employee_id" [delete: set null]
+
+Ref "attendance_logs_encoded_by_fkey":"user_accounts"."user_id" ?<? "attendance_logs"."encoded_by_user_id" [delete: set null]
+
+Ref "attendance_logs_schedule_id_fkey":"schedule"."schedule_id" ?<? "attendance_logs"."schedule_id" [delete: set null]
+
+Ref "attendance_summaries_employee_id_fkey":"employees"."employee_id" <? "attendance_summaries"."employee_id" [delete: cascade]
+
+Ref "attendance_summaries_generated_by_fkey":"user_accounts"."user_id" ?<? "attendance_summaries"."generated_by_user_id" [delete: set null]
+
+Ref "attendance_summaries_reviewed_by_fkey":"user_accounts"."user_id" ?<? "attendance_summaries"."reviewed_by_user_id" [delete: set null]
+
+Ref "dss_result_items_employee_id_fkey":"employees"."employee_id" <? "dss_result_items"."employee_id" [delete: cascade]
+
+Ref "dss_result_items_evaluation_id_fkey":"employee_evaluations"."evaluation_id" <? "dss_result_items"."evaluation_id" [delete: cascade]
+
+Ref "dss_result_items_result_id_fkey":"dss_results"."result_id" <? "dss_result_items"."result_id" [delete: cascade]
+
+Ref "dss_results_approved_by_fkey":"user_accounts"."user_id" ?<? "dss_results"."approved_by_user_id" [delete: set null]
+
+Ref "dss_results_generated_by_fkey":"user_accounts"."user_id" ?<? "dss_results"."generated_by_user_id" [delete: set null]
+
+Ref "employee_account_requests_auth_user_id_fkey":"auth"."users"."id" <? "employee_account_requests"."auth_user_id" [delete: cascade]
+
+Ref "employee_account_requests_reviewed_by_fkey":"auth"."users"."id" ?<? "employee_account_requests"."reviewed_by" [delete: set null]
+
+Ref "employee_evaluation_scores_criteria_id_fkey":"evaluation_criteria"."criteria_id" <? "employee_evaluation_scores"."criteria_id" [delete: restrict]
+
+Ref "employee_evaluation_scores_evaluation_id_fkey":"employee_evaluations"."evaluation_id" <? "employee_evaluation_scores"."evaluation_id" [delete: cascade]
+
+Ref "employee_evaluations_approved_by_user_id_fkey":"user_accounts"."user_id" ?<? "employee_evaluations"."approved_by_user_id" [delete: set null]
+
+Ref "employee_evaluations_employee_id_fkey":"employees"."employee_id" <? "employee_evaluations"."employee_id" [delete: cascade]
+
+Ref "employee_leave_balances_employee_id_fkey":"employees"."employee_id" <? "employee_leave_balances"."employee_id" [delete: cascade]
+
+Ref "employee_requests_employee_id_fkey":"employees"."employee_id" <? "employee_requests"."employee_id" [delete: cascade]
+
+Ref "employee_requests_reviewed_by_user_id_fkey":"user_accounts"."user_id" ?<? "employee_requests"."reviewed_by_user_id" [delete: set null]
+
+Ref "generated_report_history_created_by_fkey":"auth"."users"."id" <? "generated_report_history"."created_by" [delete: restrict]
+
+Ref "payroll_items_attendance_summary_id_fkey":"attendance_summaries"."summary_id" ?<? "payroll_items"."attendance_summary_id" [delete: set null]
+
+Ref "payroll_items_employee_id_fkey":"employees"."employee_id" <? "payroll_items"."employee_id" [delete: cascade]
+
+Ref "payroll_items_payroll_id_fkey":"payroll_summaries"."payroll_id" <? "payroll_items"."payroll_id" [delete: cascade]
+
+Ref "payroll_summaries_prepared_by_fkey":"user_accounts"."user_id" ?<? "payroll_summaries"."prepared_by_user_id" [delete: set null]
+
+Ref "payroll_summaries_reviewed_by_fkey":"user_accounts"."user_id" ?<? "payroll_summaries"."reviewed_by_user_id" [delete: set null]
+
+Ref "schedule_employee_id_fkey":"employees"."employee_id" ?<? "schedule"."employee_id" [delete: set null]
+
+Ref "schedule_swap_requests_recipient_employee_id_fkey":"employees"."employee_id" <? "schedule_swap_requests"."recipient_employee_id" [delete: cascade]
+
+Ref "schedule_swap_requests_recipient_schedule_id_fkey":"schedule"."schedule_id" <? "schedule_swap_requests"."recipient_schedule_id" [delete: cascade]
+
+Ref "schedule_swap_requests_requester_employee_id_fkey":"employees"."employee_id" <? "schedule_swap_requests"."requester_employee_id" [delete: cascade]
+
+Ref "schedule_swap_requests_requester_schedule_id_fkey":"schedule"."schedule_id" <? "schedule_swap_requests"."requester_schedule_id" [delete: cascade]
+
+Ref "system_logs_user_id_fkey":"user_accounts"."user_id" ?<? "system_logs"."user_id" [delete: set null]
+
+Ref "user_accounts_applicant_id_fkey":"applicants"."applicant_id" ?<? "user_accounts"."applicant_id" [update: cascade, delete: set null]
+
+Ref "user_accounts_auth_user_id_fkey":"auth"."users"."id" ?<? "user_accounts"."auth_user_id" [delete: set null]
+
+Ref "user_accounts_employee_id_fkey":"employees"."employee_id" ?<? "user_accounts"."employee_id" [update: cascade, delete: set null]

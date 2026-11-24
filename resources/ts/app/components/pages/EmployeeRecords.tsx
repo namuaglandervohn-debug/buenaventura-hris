@@ -27,7 +27,6 @@ import {
   Alert,
   Tooltip,
   Grid,
-  Autocomplete,
 } from "../bootstrap";
 import {
   AddCircleOutline,
@@ -46,9 +45,6 @@ import {
   LocalPhoneRounded,
   EmailRounded,
   CalendarMonthRounded,
-  ScheduleRounded,
-  AccessTimeRounded,
-  CoffeeRounded,
   CloseRounded,
   PersonAddAlt1Rounded,
 } from "../bootstrap/icons";
@@ -77,10 +73,6 @@ interface Employee {
   email?: string;
   dateHired?: string;
   createdAt?: string;
-  dailySchedule?: string;
-  breakTime?: string;
-  timeIn?: string;
-  timeOut?: string;
 }
 
 const EMPTY_FORM = {
@@ -92,31 +84,7 @@ const EMPTY_FORM = {
   contact: "",
   email: "",
   dateHired: "",
-  dailySchedule: "",
-  breakTime: "",
-  timeIn: "",
-  timeOut: "",
 };
-
-// Preset schedule options
-const SCHEDULE_PRESETS = [
-  { label: "6:00 AM – 3:00 PM",  timeIn: "6:00 AM",  timeOut: "3:00 PM"  },
-  { label: "7:00 AM – 4:00 PM",  timeIn: "7:00 AM",  timeOut: "4:00 PM"  },
-  { label: "8:00 AM – 5:00 PM",  timeIn: "8:00 AM",  timeOut: "5:00 PM"  },
-  { label: "9:00 AM – 6:00 PM",  timeIn: "9:00 AM",  timeOut: "6:00 PM"  },
-  { label: "10:00 AM – 7:00 PM", timeIn: "10:00 AM", timeOut: "7:00 PM"  },
-  { label: "3:00 PM – 11:00 PM", timeIn: "3:00 PM",  timeOut: "11:00 PM" },
-  { label: "11:00 PM – 7:00 AM", timeIn: "11:00 PM", timeOut: "7:00 AM"  },
-  { label: "Off",                 timeIn: "",          timeOut: ""          },
-];
-
-const BREAK_TIME_OPTIONS = ["30 minutes", "1 hour", "1 hour 30 minutes", "2 hours"];
-
-const TIME_OPTIONS = [
-  "5:00 AM","6:00 AM","7:00 AM","8:00 AM","9:00 AM","10:00 AM","11:00 AM",
-  "12:00 PM","1:00 PM","2:00 PM","3:00 PM","4:00 PM","5:00 PM","6:00 PM",
-  "7:00 PM","8:00 PM","9:00 PM","10:00 PM","11:00 PM",
-];
 
 
 const GREEN_UI = {
@@ -264,10 +232,6 @@ export default function EmployeeRecords() {
       email: e.email ?? "",
       dateHired: e.hire_date ?? "",
       createdAt: e.created_at ?? "",
-      dailySchedule: e.daily_schedule ?? "",
-      breakTime: e.break_time ?? "",
-      timeIn: e.time_in ?? "",
-      timeOut: e.time_out ?? "",
     }));
 
     setEmployees(safe);
@@ -339,10 +303,6 @@ export default function EmployeeRecords() {
       email: employeeData.email ?? "",
       dateHired: employeeData.hire_date ?? "",
       createdAt: employeeData.created_at ?? "",
-      dailySchedule: employeeData.daily_schedule ?? "",
-      breakTime: employeeData.break_time ?? "",
-      timeIn: employeeData.time_in ?? "",
-      timeOut: employeeData.time_out ?? "",
     };
 
     setEmployees((prev) => [newEmployee, ...prev]);
@@ -600,7 +560,7 @@ export default function EmployeeRecords() {
             ),
           }}
         /></Grid>
-        <Grid size={{ xs: 12, sm: 2 }}><Button onClick={() => { setSearch(''); setSearchField('all'); setColumnFilters({ ...emptyEmployeeFilters }); }}>Clear all</Button></Grid>
+        <Grid size={{ xs: 12, sm: 2 }} sx={{ alignSelf: 'flex-end' }}><Button sx={{ height: 56 }} onClick={() => { setSearch(''); setSearchField('all'); setColumnFilters({ ...emptyEmployeeFilters }); }}>Clear all</Button></Grid>
         </Grid>
       </Paper>
 
@@ -757,7 +717,7 @@ export default function EmployeeRecords() {
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap' }}>
                         <Chip
-                          label={user?.role === "supervisor" ? "View Profile" : "Edit Profile"}
+                          label={user?.role === "employee" && user.employeeId === emp.id ? "Edit Profile" : "View Profile"}
                           size="small"
                           clickable
                           variant="outlined"
@@ -776,6 +736,7 @@ export default function EmployeeRecords() {
                         {canDelete && (
                           <Chip
                             label="Delete"
+                            className="hris-chip-danger"
                             size="small"
                             clickable
                             variant="outlined"
@@ -1078,148 +1039,7 @@ export default function EmployeeRecords() {
             </Grid>
           </Paper>
 
-          {/* ── Schedule Assignment ─────────────────────────── */}
-          <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 } }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-              <Box sx={{ ...iconTileSx, width: 34, height: 34, borderRadius: '13px' }}>
-                <ScheduleRounded fontSize="small" />
-              </Box>
-              <Typography variant="subtitle2" fontWeight={700} sx={{ color: GREEN_UI.greenDark }}>
-                Schedule Assignment
-              </Typography>
-            </Box>
-            <Typography variant="caption" sx={{ color: GREEN_UI.muted, display: 'block', mb: 1.5 }}>
-              Optional schedule details for initial employee setup.
-            </Typography>
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12 }}>
-                <Autocomplete
-                  freeSolo
-                  options={SCHEDULE_PRESETS.map((s) => s.label)}
-                  value={form.dailySchedule}
-                  onChange={(_, newVal) => {
-                    const preset = SCHEDULE_PRESETS.find((s) => s.label === newVal);
-                    setForm({
-                      ...form,
-                      dailySchedule: newVal ?? "",
-                      timeIn:  preset ? preset.timeIn  : form.timeIn,
-                      timeOut: preset ? preset.timeOut : form.timeOut,
-                    });
-                  }}
-                  onInputChange={(_, newVal) =>
-                    setForm({ ...form, dailySchedule: newVal })
-                  }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Daily Schedule Assignment"
-                      placeholder='e.g. 8:00 AM – 5:00 PM or type "Off"'
-                      InputLabelProps={{ shrink: true }}
-                      sx={softTextFieldSx}
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <ScheduleRounded sx={{ color: GREEN_UI.greenDark }} />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                  )}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Autocomplete
-                  freeSolo
-                  options={BREAK_TIME_OPTIONS}
-                  value={form.breakTime}
-                  onChange={(_, newVal) =>
-                    setForm({ ...form, breakTime: newVal ?? "" })
-                  }
-                  onInputChange={(_, newVal) =>
-                    setForm({ ...form, breakTime: newVal })
-                  }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Break Time"
-                      placeholder="e.g. 1 hour"
-                      InputLabelProps={{ shrink: true }}
-                      sx={softTextFieldSx}
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <CoffeeRounded sx={{ color: GREEN_UI.greenDark }} />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                  )}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Autocomplete
-                  freeSolo
-                  options={TIME_OPTIONS}
-                  value={form.timeIn}
-                  onChange={(_, newVal) =>
-                    setForm({ ...form, timeIn: newVal ?? "" })
-                  }
-                  onInputChange={(_, newVal) =>
-                    setForm({ ...form, timeIn: newVal })
-                  }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Scheduled Time-In"
-                      placeholder="e.g. 8:00 AM"
-                      InputLabelProps={{ shrink: true }}
-                      sx={softTextFieldSx}
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <AccessTimeRounded sx={{ color: GREEN_UI.greenDark }} />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                  )}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Autocomplete
-                  freeSolo
-                  options={TIME_OPTIONS}
-                  value={form.timeOut}
-                  onChange={(_, newVal) =>
-                    setForm({ ...form, timeOut: newVal ?? "" })
-                  }
-                  onInputChange={(_, newVal) =>
-                    setForm({ ...form, timeOut: newVal })
-                  }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Scheduled Time-Out"
-                      placeholder="e.g. 5:00 PM"
-                      InputLabelProps={{ shrink: true }}
-                      sx={softTextFieldSx}
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <AccessTimeRounded sx={{ color: GREEN_UI.greenDark }} />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                  )}
-                />
-              </Grid>
-            </Grid>
-          </Paper>
+
         </DialogContent>
         <DialogActions
           sx={{

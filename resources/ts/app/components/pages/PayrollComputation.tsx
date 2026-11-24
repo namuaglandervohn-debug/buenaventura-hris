@@ -7,7 +7,7 @@ import {
   DialogTitle, DialogContent, DialogActions, Grid, CircularProgress,
   Alert, Tooltip, IconButton, MenuItem, InputAdornment, Checkbox, FormControlLabel,
 } from '../bootstrap';
-import { Calculate, Visibility, Send, AddCircleOutline, Sync, Payments, TaskAlt, DeleteOutline, Print, CloudUpload, Download, Settings, CalendarMonth } from '../bootstrap/icons';
+import { Calculate, Visibility, Send, AddCircleOutline, Sync, Payments, TaskAlt, DeleteOutline, Print, CloudUpload, Download, Settings, CalendarMonth, ManageSearch } from '../bootstrap/icons';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { attendancePunchFields, loadAttendanceCalculator } from '../../lib/loadAttendanceCalculator';
@@ -579,6 +579,7 @@ export default function PayrollComputation() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState('');
+  const [filterSearch, setFilterSearch] = useState('');
   const [monthlyHoursOpen, setMonthlyHoursOpen] = useState(false);
   const [releaseCutoff, setReleaseCutoff] = useState<Payroll | null>(null);
   const [releaseOptions, setReleaseOptions] = useState<Payroll[]>([]);
@@ -1716,7 +1717,10 @@ export default function PayrollComputation() {
     if (isAccountingFinance && !isGeneralManager && p.status === 'Draft') return false;
     const periodMatch = !filterPeriod || p.period === filterPeriod;
     const statusMatch = filterStatus === 'all' || p.status.toLowerCase().replace(' ', '') === filterStatus.toLowerCase().replace(' ', '');
-    return periodMatch && statusMatch;
+    const searchTerm = filterSearch.trim().toLowerCase();
+    const searchMatch = !searchTerm || [p.employeeId, p.employee, p.position]
+      .some(value => String(value ?? '').toLowerCase().includes(searchTerm));
+    return periodMatch && statusMatch && searchMatch;
   });
 
   const parseAmt = (v: string) => parseFloat((v ?? '').replace(/[₱,]/g, '')) || 0;
@@ -2100,11 +2104,18 @@ export default function PayrollComputation() {
           <Grid size={{ xs: 12, md: 4 }}>
             <TextField
               fullWidth
-              label="Filter by Cutoff Month"
-              type="month"
-              value={filterPeriod}
-              onChange={e => setFilterPeriod(e.target.value)}
+              label="Search by EMP ID, Employee Name, or Position"
+              placeholder="Enter an EMP ID, name, or position"
+              value={filterSearch}
+              onChange={e => setFilterSearch(e.target.value)}
               InputLabelProps={{ shrink: true }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <ManageSearch sx={{ color: GREEN_UI.greenDark }} />
+                  </InputAdornment>
+                ),
+              }}
               sx={softTextFieldSx}
             />
           </Grid>
@@ -2126,14 +2137,15 @@ export default function PayrollComputation() {
             </TextField>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
-            <Button
+            <TextField
               fullWidth
-              variant="outlined"
-              sx={{ ...pillButtonSx, height: '56px', borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark, bgcolor: '#ffffff' }}
-              onClick={() => { setFilterPeriod(''); setFilterStatus('all'); }}
-            >
-              Clear Filters
-            </Button>
+              label="Filter by Cutoff Month"
+              type="month"
+              value={filterPeriod}
+              onChange={e => setFilterPeriod(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={softTextFieldSx}
+            />
           </Grid>
         </Grid>
       </Paper>
@@ -2209,7 +2221,7 @@ export default function PayrollComputation() {
                       <Typography variant="body2" sx={{ color: GREEN_UI.muted, mt: 0.5 }}>
                         {payrolls.length === 0
                           ? 'Click Generate Payroll to create records for all active employees.'
-                          : 'Adjust or clear your filters to show more records.'}
+                          : 'Adjust your filters to show more records.'}
                       </Typography>
                     </Box>
                   </TableCell>
@@ -2276,6 +2288,7 @@ export default function PayrollComputation() {
                         <Chip
                           icon={<Payments />}
                           label="Release"
+                          className="hris-chip-release"
                           size="small"
                           clickable
                           variant="outlined"
@@ -2296,6 +2309,7 @@ export default function PayrollComputation() {
                         <Chip
                           icon={<DeleteOutline />}
                           label="Delete"
+                          className="hris-chip-danger"
                           size="small"
                           clickable
                           variant="outlined"
@@ -2619,14 +2633,7 @@ export default function PayrollComputation() {
         onClose={() => { setViewDialog(false); setEditingPayslip(false); }}
         maxWidth="sm"
         fullWidth
-        PaperProps={{
-          sx: {
-            ...dialogPaperSx,
-            maxWidth: 768,
-            mx: { xs: 1.5, sm: 4 },
-            width: { xs: 'calc(100% - 24px)', sm: 'calc(100% - 64px)' },
-          },
-        }}
+        PaperProps={{ sx: dialogPaperSx }}
       >
         <DialogTitle sx={{ ...dialogTitleSx, pb: 1.5 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2913,10 +2920,9 @@ export default function PayrollComputation() {
         <DialogActions
           disableSpacing
           sx={{
-            display: { xs: 'grid', sm: 'flex' },
-            gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-            gridAutoRows: '1fr',
-            alignItems: 'stretch',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
             flexWrap: 'wrap',
             gap: 1,
             px: { xs: 1.5, sm: 2 },
@@ -2924,6 +2930,8 @@ export default function PayrollComputation() {
             borderTop: `1px solid ${GREEN_UI.border}`,
             bgcolor: '#fbfff9',
             '& > .MuiButton-root': {
+              width: 'auto',
+              minWidth: 120,
               minHeight: 38,
               px: { xs: 1, sm: 1.5 },
               lineHeight: 1.4,

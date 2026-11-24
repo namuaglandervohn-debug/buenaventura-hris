@@ -1475,7 +1475,7 @@ export default function Reports() {
                 <MenuItem key={outlet} value={outlet}>{outlet}</MenuItem>)}
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 3 }} sx={{ alignSelf: 'flex-end' }}>
             <Button
               fullWidth
               variant="outlined"

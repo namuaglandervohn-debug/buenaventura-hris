@@ -13,6 +13,7 @@ import {
   AdminPanelSettings, Badge, ManageSearch, CheckCircleOutline, HighlightOff, HourglassEmpty,
 } from '../bootstrap/icons';
 import { supabase } from "../../lib/supabaseClient";
+import { useAuth } from '../../context/AuthContext';
 import { NO_OUTLET, OUTLETS } from '../../lib/constants';
 import { useJobTitleOptions } from '../../lib/useJobTitleOptions';
 import ActionSnackbar from '../ActionSnackbar';
@@ -45,6 +46,7 @@ interface EmployeeAccountRequest {
   full_name: string;
   submitted_full_name?: string | null;
   requested_outlet?: string | null;
+  requested_position?: string | null;
   email: string;
   created_at: string;
 }
@@ -172,6 +174,7 @@ const getNextEmployeeId = (ids: string[]) => {
 };
 
 export default function UserManagement() {
+  const { user: signedInUser } = useAuth();
   const [users, setUsers]           = useState<UserAccount[]>([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
@@ -185,6 +188,7 @@ export default function UserManagement() {
   const [employeeAccountRequests, setEmployeeAccountRequests] = useState<EmployeeAccountRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [requestsError, setRequestsError] = useState<string | null>(null);
+  const [openRequestsDialog, setOpenRequestsDialog] = useState(false);
   const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null);
   const [search, setSearch]         = useState('');
   const [passwordForm, setPasswordForm] = useState(EMPTY_PASSWORD_FORM);
@@ -196,6 +200,12 @@ export default function UserManagement() {
   });
   // Tracks whether we're computing the next EMP ID before opening the dialog
   const [empIdLoading, setEmpIdLoading] = useState(false);
+  const isHrAdminRole = (role?: string | null) => ['hr', 'hr_admin', 'admin'].includes(String(role ?? '').trim().toLowerCase());
+  const activeHrAdminCount = users.filter(account => account.active !== false && isHrAdminRole(account.role)).length;
+  const cannotRemoveLastHrAdmin = (account: UserAccount, nextRole = account.role, nextActive = account.active !== false) =>
+    account.active !== false && isHrAdminRole(account.role)
+      && (!isHrAdminRole(nextRole) || !nextActive)
+      && activeHrAdminCount <= 1;
 
   /* ── Data fetching ───────────────────────────────────────────────────��� */
   const fetchUsers = async () => {
@@ -237,13 +247,13 @@ export default function UserManagement() {
     setRequestsLoading(true);
     setRequestsError(null);
     let { data, error } = await supabase.from('employee_account_requests')
-      .select('id,employee_id,full_name,submitted_full_name,requested_outlet,email,created_at').eq('status', 'Pending')
+      .select('id,employee_id,full_name,submitted_full_name,requested_outlet,requested_position,email,created_at').eq('status', 'Pending')
       .order('created_at', { ascending: true });
-    if (error && /submitted_full_name|requested_outlet/i.test(error.message)) {
+    if (error && /submitted_full_name|requested_outlet|requested_position/i.test(error.message)) {
       const legacyResult = await supabase.from('employee_account_requests')
         .select('id,employee_id,full_name,email,created_at').eq('status', 'Pending')
         .order('created_at', { ascending: true });
-      data = (legacyResult.data ?? []).map(row => ({ ...row, submitted_full_name: null, requested_outlet: null }));
+      data = (legacyResult.data ?? []).map(row => ({ ...row, submitted_full_name: null, requested_outlet: null, requested_position: null }));
       error = legacyResult.error;
     }
     if (error) {
@@ -265,6 +275,7 @@ export default function UserManagement() {
         ? 'approve_employee_account_request'
         : 'reject_employee_account_request', { p_request_id: request.id });
       if (error && action === 'approve') {
+        const approvalError = error;
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const accessToken = sessionData.session?.access_token;
         if (sessionError || !accessToken) throw new Error('Your HR session expired. Sign in again and retry.');
@@ -279,6 +290,7 @@ export default function UserManagement() {
           body: JSON.stringify({ action: 'approve_employee_account_request', request_id: request.id }),
         });
         const fallbackData = await response.json().catch(() => null);
+        if (fallbackData?.code === 'employee_account_not_created') throw approvalError;
         if (!response.ok) throw new Error(fallbackData?.message || error.message || 'Could not approve the registration.');
         data = fallbackData;
         error = null;
@@ -469,6 +481,27 @@ export default function UserManagement() {
   const handleEdit = async () => {
   if (!selectedUser) return;
 
+  const nextRole = editForm.role ?? selectedUser.role;
+  const nextActive = editForm.active ?? selectedUser.active ?? true;
+  if (selectedUser.id === signedInUser?.id && isHrAdminRole(selectedUser.role)
+    && (!isHrAdminRole(nextRole) || !nextActive)) {
+    setSnackbar({ open: true, message: 'You cannot remove your own active HR Admin access. Ask another HR Admin to make this change.', severity: 'error' });
+    return;
+  }
+  if (cannotRemoveLastHrAdmin(selectedUser, nextRole, nextActive)) {
+    setSnackbar({ open: true, message: 'At least one active HR Admin account must remain. Activate another HR Admin account first.', severity: 'error' });
+    return;
+  }
+
+  if (selectedUser.hasLogin && String(editForm.email ?? '').trim().toLowerCase() !== selectedUser.email.trim().toLowerCase()) {
+    setSnackbar({
+      open: true,
+      message: 'This account email is linked to its sign-in login. Change it through the authentication account workflow so both records stay in sync.',
+      severity: 'error',
+    });
+    return;
+  }
+
   setSaving(true);
 
   try {
@@ -579,6 +612,15 @@ export default function UserManagement() {
   const handleToggleActive = async (user: UserAccount) => {
   const newActive = user.active === false;
 
+  if (!newActive && user.id === signedInUser?.id && isHrAdminRole(user.role)) {
+    setSnackbar({ open: true, message: 'You cannot deactivate your own active HR Admin account. Ask another HR Admin to make this change.', severity: 'error' });
+    return;
+  }
+  if (cannotRemoveLastHrAdmin(user, user.role, newActive)) {
+    setSnackbar({ open: true, message: 'At least one active HR Admin account must remain. Activate another HR Admin account first.', severity: 'error' });
+    return;
+  }
+
   try {
     const { error } = await supabase
       .from("user_accounts")
@@ -629,6 +671,14 @@ export default function UserManagement() {
 };
 
   const handleDelete = async (u: UserAccount) => {
+  if (u.id === signedInUser?.id && isHrAdminRole(u.role)) {
+    setSnackbar({ open: true, message: 'You cannot delete your own active HR Admin account.', severity: 'error' });
+    return;
+  }
+  if (cannotRemoveLastHrAdmin(u, u.role, false)) {
+    setSnackbar({ open: true, message: 'At least one active HR Admin account must remain. Activate another HR Admin account first.', severity: 'error' });
+    return;
+  }
   if (!window.confirm(`Permanently delete account for ${u.name} (${u.id})? This cannot be undone.`)) return;
 
   try {
@@ -813,37 +863,28 @@ export default function UserManagement() {
             >
               {empIdLoading ? 'Preparing…' : 'Create Account'}
             </Button>
-          </Box>
-        </Box>
-      </Paper>
 
-      <Paper elevation={0} sx={{ ...softCardSx, p: { xs: 2, sm: 2.5 }, mb: 2.5 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, mb: 1.5, flexWrap: 'wrap' }}>
-          <Box>
-            <Typography variant="h6" fontWeight={700} sx={{ color: GREEN_UI.text }}>Employee self-registration requests</Typography>
+            <Button
+              variant="outlined"
+              startIcon={requestsLoading ? <CircularProgress size={16} /> : <HourglassEmpty />}
+              onClick={() => {
+                setOpenRequestsDialog(true);
+                void fetchEmployeeAccountRequests();
+              }}
+              sx={{
+                ...pillButtonSx,
+                py: 1.1,
+                width: { xs: '100%', sm: 'auto' },
+                borderColor: GREEN_UI.borderStrong,
+                color: GREEN_UI.greenDark,
+                bgcolor: '#ffffff',
+                '&:hover': { borderColor: GREEN_UI.green, bgcolor: GREEN_UI.greenSoft },
+              }}
+            >
+              {requestsLoading ? 'Pending' : `Pending (${employeeAccountRequests.length})`}
+            </Button>
           </Box>
-          <Chip icon={<HourglassEmpty />} label={`${employeeAccountRequests.length} pending`} variant="outlined" sx={{ fontWeight: 700, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }} />
         </Box>
-        {requestsError ? <Alert severity="warning" sx={{ mb: employeeAccountRequests.length ? 1.5 : 0 }}>{requestsError}</Alert> : null}
-        {requestsLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><CircularProgress size={24} sx={{ color: GREEN_UI.green }} /></Box>
-          : employeeAccountRequests.length === 0 ? <Typography variant="body2" sx={{ color: GREEN_UI.muted, py: 1 }}>No employee registrations are waiting for review.</Typography>
-          : <Stack spacing={1}>
-            {employeeAccountRequests.map(request => (
-              <Box key={request.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap', p: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}`, bgcolor: '#fbfef9' }}>
-                <Box sx={{ minWidth: 220, flex: '1 1 300px' }}>
-                  <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>{request.submitted_full_name || request.full_name || 'Employee'}</Typography>
-                  <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
-                    Employee ID: {request.employee_id}{request.requested_outlet ? ` · Assigned outlet: ${request.requested_outlet}` : ''}
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: GREEN_UI.muted }}>{request.email} · Submitted {new Date(request.created_at).toLocaleDateString()}</Typography>
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button size="small" variant="outlined" color="error" startIcon={<HighlightOff />} disabled={Boolean(reviewingRequestId)} onClick={() => void reviewEmployeeAccountRequest(request, 'reject')}>Reject</Button>
-                  <Button size="small" variant="contained" startIcon={reviewingRequestId === request.id ? <CircularProgress size={15} color="inherit" /> : <CheckCircleOutline />} disabled={Boolean(reviewingRequestId)} onClick={() => void reviewEmployeeAccountRequest(request, 'approve')}>Approve and activate</Button>
-                </Box>
-              </Box>
-            ))}
-          </Stack>}
       </Paper>
 
       <Grid container spacing={1.5} sx={{ mb: 2.5 }}>
@@ -1061,20 +1102,22 @@ export default function UserManagement() {
                       <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap' }}>
                         <Chip
                           label={u.active === false ? 'Activate' : 'Deactivate'}
+                          className={u.active === false ? 'hris-chip-restore' : 'hris-chip-deactivate'}
                           size="small"
                           clickable
-                          variant="outlined"
+                          variant={u.active === false ? 'filled' : 'outlined'}
                           icon={u.active === false ? <Visibility /> : <VisibilityOff />}
                           onClick={() => handleToggleActive(u)}
                           sx={{
                             minWidth: 118,
                             justifyContent: 'center',
                             fontWeight: 600,
-                            borderColor: u.active === false ? '#a9dfb6' : '#efd69a',
-                            color: u.active === false ? '#1f7a46' : '#8a6400',
-                            bgcolor: u.active === false ? '#f1fbf2' : '#fffaf0',
-                            '&:hover': { bgcolor: u.active === false ? GREEN_UI.greenSoft : '#fff2d2' },
-                            '& .MuiChip-icon': { color: u.active === false ? '#1f7a46' : '#8a6400' },
+                            borderColor: u.active === false ? GREEN_UI.greenDark : '#efd69a',
+                            color: u.active === false ? '#ffffff' : '#8a6400',
+                            bgcolor: u.active === false ? GREEN_UI.greenDark : '#fffaf0',
+                            '&:hover': { bgcolor: u.active === false ? '#176339' : '#fff2d2' },
+                            '&:focus-visible': { outline: `2px solid ${GREEN_UI.green}`, outlineOffset: 2 },
+                            '& .MuiChip-icon': { color: u.active === false ? '#ffffff' : '#8a6400' },
                           }}
                         />
 
@@ -1115,6 +1158,7 @@ export default function UserManagement() {
 
                         <Chip
                           label="Delete"
+                          className="hris-chip-danger"
                           size="small"
                           clickable
                           variant="outlined"
@@ -1140,6 +1184,72 @@ export default function UserManagement() {
           </Table>
         )}
       </TableContainer>
+
+      {/* ── Employee Registration Requests Dialog ────────────────────── */}
+      <Dialog
+        open={openRequestsDialog}
+        onClose={() => setOpenRequestsDialog(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: { xs: '22px', sm: '30px' },
+            overflow: 'hidden',
+            border: `1px solid ${GREEN_UI.border}`,
+            background: '#fbfff9',
+            boxShadow: '0 28px 70px rgba(27, 73, 37, 0.18)',
+          },
+        }}
+      >
+        <DialogTitle
+          fontWeight={700}
+          sx={{
+            px: { xs: 2, sm: 3 },
+            py: 2.25,
+            background: 'linear-gradient(135deg, #ffffff 0%, #eef9ea 100%)',
+            borderBottom: `1px solid ${GREEN_UI.border}`,
+          }}
+        >
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>
+              Employee self-registration requests
+            </Typography>
+            <Chip
+              icon={<HourglassEmpty />}
+              label={`${employeeAccountRequests.length} pending`}
+              variant="outlined"
+              sx={{ fontWeight: 700, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
+            />
+          </Box>
+        </DialogTitle>
+
+        <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: 2.5, bgcolor: '#fbfff9', maxHeight: '70vh' }}>
+          {requestsError ? <Alert severity="warning" sx={{ mb: employeeAccountRequests.length ? 1.5 : 0 }}>{requestsError}</Alert> : null}
+          {requestsLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress size={24} sx={{ color: GREEN_UI.green }} /></Box>
+            : employeeAccountRequests.length === 0 ? <Typography variant="body2" sx={{ color: GREEN_UI.muted, py: 1 }}>No employee registrations are waiting for review.</Typography>
+            : <Stack spacing={1}>
+              {employeeAccountRequests.map(request => (
+                <Box key={request.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap', p: 1.5, borderRadius: '16px', border: `1px solid ${GREEN_UI.border}`, bgcolor: '#ffffff' }}>
+                  <Box sx={{ minWidth: 220, flex: '1 1 300px' }}>
+                    <Typography fontWeight={700} sx={{ color: GREEN_UI.text }}>{request.submitted_full_name || request.full_name || 'Employee'}</Typography>
+                    <Typography variant="caption" sx={{ color: GREEN_UI.muted }}>
+                      Employee ID: {request.employee_id}{request.requested_position ? ` · Position: ${request.requested_position}` : ''}{request.requested_outlet ? ` · Assigned outlet: ${request.requested_outlet}` : ''}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: GREEN_UI.muted }}>{request.email} · Submitted {new Date(request.created_at).toLocaleDateString()}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Button size="small" variant="outlined" color="error" startIcon={<HighlightOff />} disabled={Boolean(reviewingRequestId)} onClick={() => void reviewEmployeeAccountRequest(request, 'reject')}>Reject</Button>
+                    <Button size="small" variant="contained" startIcon={reviewingRequestId === request.id ? <CircularProgress size={15} color="inherit" /> : <CheckCircleOutline />} disabled={Boolean(reviewingRequestId)} onClick={() => void reviewEmployeeAccountRequest(request, 'approve')}>Approve and activate</Button>
+                  </Box>
+                </Box>
+              ))}
+            </Stack>}
+        </DialogContent>
+
+        <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 1.5, bgcolor: '#ffffff', borderTop: `1px solid ${GREEN_UI.border}` }}>
+          <Button onClick={() => setOpenRequestsDialog(false)} sx={{ ...pillButtonSx, color: GREEN_UI.muted }}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* ── Create Account Dialog ─────────────────────────────────────── */}
       <Dialog
@@ -1385,6 +1495,8 @@ export default function UserManagement() {
                 fullWidth
                 label="Email / Username"
                 value={editForm.email ?? ''}
+                disabled={Boolean(selectedUser?.hasLogin)}
+                helperText={selectedUser?.hasLogin ? 'This sign-in email is linked to Supabase Auth and cannot be changed here.' : undefined}
                 onChange={e => setEditForm({ ...editForm, email: e.target.value })}
                 sx={softTextFieldSx}
               />

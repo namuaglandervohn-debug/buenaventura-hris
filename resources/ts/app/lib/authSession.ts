@@ -26,6 +26,7 @@ type Client = Pick<SupabaseClient, 'auth' | 'from' | 'rpc'>;
 type AuthIdentity = Pick<User, 'id' | 'email'> & Partial<Pick<User, 'user_metadata' | 'app_metadata'>>;
 const PROFILE_COLUMNS = 'user_id, auth_user_id, full_name, email, role, employee_id, outlet';
 const missingProfileMessage = 'This login is not linked to an active matching HRIS account. Please contact HR.';
+const escapeLikePattern = (value: string) => value.replace(/[\\%_]/g, '\\$&');
 
 class MissingAuthProfileError extends Error {}
 
@@ -39,7 +40,7 @@ export async function loadAuthProfile(client: Client, authUser: AuthIdentity): P
   if (!account) {
     // Legacy profiles may be unlinked. Never use a profile linked to someone else,
     // and never change account links as a side effect of signing in.
-    const legacy = await query().eq('email', email).is('auth_user_id', null).maybeSingle();
+    const legacy = await query().ilike('email', escapeLikePattern(email)).is('auth_user_id', null).maybeSingle();
     if (legacy.error) throw legacy.error;
     account = legacy.data;
   }
@@ -70,13 +71,17 @@ export async function loadAuthProfile(client: Client, authUser: AuthIdentity): P
       return { id: authUser.id, name: [profile.firstName, profile.middleName, profile.lastName, profile.suffix].filter(Boolean).join(' '), email, role: 'applicant' };
     }
   }
-  if (!account || String(account.email).trim().toLowerCase() !== email) {
+  // auth_user_id is the verified identity for linked accounts. The HRIS email
+  // can be edited separately from Supabase Auth, so it must not invalidate an
+  // otherwise exact, active UUID link. Legacy unlinked accounts still require
+  // an exact case-insensitive email match above.
+  if (!account || (!linked.data && String(account.email).trim().toLowerCase() !== email)) {
     throw new MissingAuthProfileError(missingProfileMessage);
   }
   return {
     id: account.user_id,
     name: account.full_name,
-    email: account.email,
+    email: String(authUser.email).trim(),
     role: normalizeAppRole(account.role),
     employeeId: account.employee_id ?? null,
     outlet: account.outlet ?? null,

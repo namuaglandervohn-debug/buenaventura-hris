@@ -2524,7 +2524,7 @@ export default function AttendanceMonitoring() {
               <MenuItem key="onleave" value="onleave">On Leave</MenuItem>
             </TextField>
           </Grid>
-          <Grid size={{ xs: 12, md: 3 }}>
+          <Grid size={{ xs: 12, md: 3 }} sx={{ alignSelf: 'flex-end' }}>
             <Button
               fullWidth
               variant="outlined"
@@ -2833,7 +2833,7 @@ export default function AttendanceMonitoring() {
                           </IconButton>
                         </Tooltip>
                         {canReviewAttendance && record.employeeId && ["Needs Review", "Unprocessed", "Corrected"].includes(record.validationStatus ?? "") && (
-                          <Button size="small" disabled={saving} onClick={() => reviewAttendance(record)}>Review</Button>
+                          <Button size="small" className="hris-button-review" disabled={saving} onClick={() => reviewAttendance(record)}>Review</Button>
                         )}
                         {canManageAttendance && <>
                           <Tooltip title="Correct record">

@@ -500,44 +500,6 @@ export default function RequestManagement() {
     return null;
   };
 
-  const generateNextRequestId = async () => {
-    const year = new Date().getFullYear();
-    const startOfYear = `${year}-01-01T00:00:00.000Z`;
-    const startOfNextYear = `${year + 1}-01-01T00:00:00.000Z`;
-
-    const { data, error: sequenceError } = await supabase
-      .from('employee_requests')
-      .select('request_id, created_at')
-      .gte('created_at', startOfYear)
-      .lt('created_at', startOfNextYear);
-
-    if (sequenceError) throw sequenceError;
-
-    const usedSequences = new Set<number>();
-    const recordsThisYear = data ?? [];
-
-    recordsThisYear.forEach(row => {
-      const match = String(row.request_id ?? '').match(SEQUENTIAL_REQUEST_ID_REGEX);
-      if (!match || Number(match[1]) !== year) return;
-
-      const sequence = Number(match[2]);
-      if (Number.isFinite(sequence)) usedSequences.add(sequence);
-    });
-
-    let nextSequence = 1;
-    while (usedSequences.has(nextSequence)) {
-      nextSequence += 1;
-    }
-
-    /*
-      Legacy records may still have request IDs like REQ-AB3D15D9A9.
-      This keeps new IDs from duplicating the display sequence assigned to those old rows.
-    */
-    nextSequence = Math.max(nextSequence, recordsThisYear.length + 1);
-
-    return buildSequentialRequestId(year, nextSequence);
-  };
-
   const fetchEmployeeLeaveDirectory = async (employeeId: string | null) => {
     if (isEmployee && !employeeId) return [];
     let query = supabase
@@ -733,10 +695,7 @@ export default function RequestManagement() {
         ? computeTotalHours(newRequest.startTime, newRequest.endTime)
         : 0;
 
-      const generatedRequestId = await generateNextRequestId();
-
       const payload = {
-        request_id: generatedRequestId,
         employee_id: currentEmployeeId,
         request_type: newRequest.type,
         leave_type: newRequest.type === 'Leave' ? newRequest.leaveType : null,
@@ -1921,6 +1880,7 @@ export default function RequestManagement() {
                             <Chip
                               icon={<DeleteOutline />}
                               label="Delete"
+                              className="hris-chip-danger"
                               size="small"
                               clickable
                               variant="outlined"

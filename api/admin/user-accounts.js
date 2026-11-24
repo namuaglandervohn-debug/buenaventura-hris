@@ -36,12 +36,27 @@ async function approveAlreadyLinkedEmployeeRequest(admin, requestId, reviewerId,
   const accounts = unwrap(await admin.from('user_accounts')
     .select('user_id,employee_id,email,auth_user_id,is_active,role')
     .eq('employee_id', request.employee_id).limit(2));
-  const account = accounts?.length === 1 ? accounts[0] : null;
+  if (!accounts?.length) {
+    return send(409, {
+      code: 'employee_account_not_created',
+      message: 'No HRIS login exists for this employee yet. The registration approval did not complete.',
+    });
+  }
+  if (accounts.length > 1) {
+    return send(409, {
+      code: 'duplicate_employee_accounts',
+      message: 'Multiple HRIS logins are linked to this employee ID. HR must resolve the duplicate links before approving.',
+    });
+  }
+  const account = accounts[0];
   const sameLinkedLogin = account?.role === 'employee'
     && account.auth_user_id === request.auth_user_id
     && emailKey(account.email) === emailKey(request.email);
   if (!sameLinkedLogin) {
-    return send(409, { message: 'This employee ID is linked to a different HRIS account. Verify the employee account before approving.' });
+    return send(409, {
+      code: 'different_employee_account',
+      message: 'This employee ID is linked to a different HRIS account. Verify the employee account before approving.',
+    });
   }
 
   const verified = await admin.auth.admin.getUserById(request.auth_user_id);

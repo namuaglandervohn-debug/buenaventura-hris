@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router';
 import { Alert, Box, Button, CircularProgress, Container, IconButton, InputAdornment, MenuItem, Paper, Stack, TextField, Typography } from '../bootstrap';
 import { ArrowBackRounded, Badge, Visibility, VisibilityOff } from '../bootstrap/icons';
@@ -34,6 +34,10 @@ export default function EmployeeSelfRegistration() {
   const navigate = useNavigate();
   const [fullName, setFullName] = useState('');
   const [employeeId, setEmployeeId] = useState('');
+  const [position, setPosition] = useState('');
+  const [positionOptions, setPositionOptions] = useState<string[]>([]);
+  const [positionsLoading, setPositionsLoading] = useState(true);
+  const [positionsError, setPositionsError] = useState('');
   const [email, setEmail] = useState('');
   const [outlet, setOutlet] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +48,35 @@ export default function EmployeeSelfRegistration() {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    let mounted = true;
+    const loadPositions = async () => {
+      setPositionsLoading(true);
+      setPositionsError('');
+      try {
+        const { data, error: positionError } = await supabase.rpc('list_active_employee_registration_positions');
+        if (!mounted) return;
+        if (positionError) {
+          setPositionsError('Could not load active positions. Refresh the page and try again.');
+          setPositionOptions([]);
+        } else {
+          const options = [...new Set((data ?? []).map((title: string) => title.trim()).filter(Boolean))];
+          setPositionOptions(options);
+          if (options.length === 0) setPositionsError('There are no active positions available for registration. Contact HR.');
+        }
+      } catch {
+        if (mounted) {
+          setPositionsError('Could not load active positions. Refresh the page and try again.');
+          setPositionOptions([]);
+        }
+      } finally {
+        if (mounted) setPositionsLoading(false);
+      }
+    };
+    void loadPositions();
+    return () => { mounted = false; };
+  }, []);
+
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
@@ -52,8 +85,12 @@ export default function EmployeeSelfRegistration() {
     const cleanFullName = fullName.trim().replace(/\s+/g, ' ');
     const cleanEmployeeId = employeeId.trim();
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanFullName || cleanFullName.split(' ').length < 2 || !cleanEmployeeId || !cleanEmail || !outlet || !password) {
-      setError('Enter your full name, employee ID, email, assigned outlet, and password.');
+    if (!cleanFullName || cleanFullName.split(' ').length < 2 || !cleanEmployeeId || !position || !cleanEmail || !outlet || !password) {
+      setError('Enter your full name, employee ID, position, email, assigned outlet, and password.');
+      return;
+    }
+    if (!positionOptions.includes(position)) {
+      setError('Choose a position from the active positions list.');
       return;
     }
     if (password.length < 8 || new TextEncoder().encode(password).length > 72) {
@@ -72,7 +109,7 @@ export default function EmployeeSelfRegistration() {
         password,
         options: {
           emailRedirectTo: employeeConfirmationRedirect(window.location.origin),
-          data: { registration_kind: 'employee', full_name: cleanFullName, employee_id: cleanEmployeeId, outlet },
+          data: { registration_kind: 'employee', full_name: cleanFullName, employee_id: cleanEmployeeId, position, outlet },
         },
       });
       if (signupError) throw signupError;
@@ -107,6 +144,13 @@ export default function EmployeeSelfRegistration() {
             <TextField fullWidth required label="Employee ID" autoComplete="off" value={employeeId}
               onChange={event => setEmployeeId(event.target.value)} margin="normal"
               InputProps={{ startAdornment: <InputAdornment position="start"><Badge fontSize="small" /></InputAdornment> }} />
+            <TextField fullWidth required select label="Position" value={position}
+              onChange={event => setPosition(event.target.value)} margin="normal"
+              disabled={positionsLoading || positionOptions.length === 0}
+              helperText={positionsLoading ? 'Loading active positions…' : positionsError || 'Choose the position assigned to your employee ID.'}>
+              <MenuItem value="" disabled>Select active position</MenuItem>
+              {positionOptions.map(option => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+            </TextField>
             <TextField fullWidth required label="Email address" type="email" autoComplete="email" value={email}
               onChange={event => setEmail(event.target.value)} margin="normal" />
             <TextField fullWidth required select label="Assigned Outlet" value={outlet}
@@ -121,7 +165,7 @@ export default function EmployeeSelfRegistration() {
               InputProps={{ endAdornment: <PasswordVisibility label="confirm password" visible={showConfirmation} onToggle={() => setShowConfirmation(visible => !visible)} /> }}
               error={Boolean(confirmation && password !== confirmation)}
               helperText={confirmation ? (password === confirmation ? 'Passwords match.' : 'Passwords do not match.') : undefined} />
-            <Button type="submit" fullWidth variant="contained" disabled={busy} startIcon={busy ? <CircularProgress size={18} color="inherit" /> : undefined}
+            <Button type="submit" fullWidth variant="contained" disabled={busy || positionsLoading || positionOptions.length === 0} startIcon={busy ? <CircularProgress size={18} color="inherit" /> : undefined}
               sx={{ mt: 2, py: 1.4, borderRadius: '999px', textTransform: 'none', fontWeight: 700 }}>
               {busy ? 'Submitting…' : 'Submit registration'}
             </Button>

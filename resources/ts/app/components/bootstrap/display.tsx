@@ -88,7 +88,7 @@ export const Chip = forwardControl<any>(({
   role: onClick ? 'button' : undefined, tabIndex: onClick && !disabled ? 0 : undefined,
   'aria-disabled': disabled || undefined,
   onKeyDown: onClick ? (event: any) => { if (!disabled && ['Enter', ' '].includes(event.key)) { event.preventDefault(); onClick(event); } } : undefined,
-  className: classes('badge hris-chip MuiChip-root', variant === 'outlined' && 'hris-chip-outline', props.className),
+  className: classes('badge hris-chip MuiChip-root', (clickable || onClick) && 'hris-chip-action', variant === 'outlined' && 'hris-chip-outline', props.className),
   children: <>{avatar}{icon && <span className="MuiChip-icon">{icon}</span>}<span className="MuiChip-label">{label}</span>
     {onDelete && <button type="button" className="hris-button-base MuiChip-deleteIcon" aria-label="Remove" onClick={event => { event.stopPropagation(); onDelete(event); }}>{deleteIcon ?? '×'}</button>}</>,
 }, { fontSize: size === 'small' ? '.78rem' : '.875rem', opacity: disabled ? .6 : undefined, cursor: clickable || onClick ? 'pointer' : undefined,

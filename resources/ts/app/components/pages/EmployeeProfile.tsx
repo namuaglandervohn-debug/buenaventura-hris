@@ -340,12 +340,12 @@ export default function EmployeeProfile() {
   const [updatingPassword, setUpdatingPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
-  const [deleteDialog, setDeleteDialog] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocFile | null>(null);
   const [wordPreview, setWordPreview] = useState<{ file: DocFile; text: string } | null>(null);
   const [profileTab, setProfileTab] = useState('Personal');
   const [editProfileTab, setEditProfileTab] = useState('Personal');
   const [otherSkillsEnabled, setOtherSkillsEnabled] = useState(false);
+  const canEditOwnProfile = user?.role === 'employee' && user.employeeId === id;
   const canSeeSalary = Boolean(user && user.role !== 'supervisor');
   const canManageAccount = user?.role === 'hr' || user?.role === 'gm';
   const jobTitles = useJobTitleOptions(editing && canManageAccount);
@@ -538,7 +538,10 @@ export default function EmployeeProfile() {
 
 
   const handleSave = async () => {
-  if (!editForm || !id) return;
+  if (!canEditOwnProfile || !editForm || !id) {
+    setSnackbar({ open: true, message: 'Only the employee can edit their own profile.', severity: 'error' });
+    return;
+  }
     const nextOverride = salaryDraft === null ? editSavedSalary : Number(salaryDraft);
     if (salaryDraft && (!Number.isFinite(nextOverride) || nextOverride <= 0)) {
       setEditProfileTab('Account');
@@ -739,7 +742,7 @@ export default function EmployeeProfile() {
 };
 
   const uploadProfilePhoto = async (photo: string) => {
-    if (!id || !canManageAccount) throw new Error('This employee profile cannot be edited.');
+    if (!id || !canEditOwnProfile) throw new Error('Only the employee can edit their own profile.');
     await saveEmployeeProfilePhoto(id, photo);
     setEmployee(current => current?.id === id ? { ...current, profilePhoto: photo } : current);
     setSnackbar({ open: true, message: 'Profile picture updated.', severity: 'success' });
@@ -770,35 +773,6 @@ export default function EmployeeProfile() {
       setUpdatingPassword(false);
     }
   };
-
-  const handleDelete = async () => {
-  if (!id) return;
-
-  try {
-    const { error } = await supabase
-      .from("employees")
-      .delete()
-      .eq("employee_id", id);
-
-    if (error) throw error;
-
-    setSnackbar({
-      open: true,
-      message: "Employee deleted successfully!",
-      severity: "success",
-    });
-
-    navigate('/dashboard/employees');
-  } catch (e: any) {
-    setSnackbar({
-      open: true,
-      message: `Delete failed: ${e.message}`,
-      severity: 'error',
-    });
-  }
-
-  setDeleteDialog(false);
-};
 
   const handleRemoveDoc = (file: DocFile) => {
     setEditForm(current => current && ({
@@ -1078,25 +1052,22 @@ export default function EmployeeProfile() {
           </Box>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip label={employee.status} size="small" variant="outlined" sx={statusChipSx(employee.status)} />
-            {user?.role !== 'supervisor' && (
-              <>
-                <Button
-                  variant="outlined"
-                  startIcon={<EditNote />}
-                  sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
-                  onClick={() => {
-                    setEditForm(employee);
-                    setSalaryDraft(null);
-                    setEditProfileTab(canManageAccount ? 'Account' : 'Personal');
-                    setPasswordFields(EMPTY_PASSWORD_FIELDS);
-                    setOtherSkillsEnabled(Boolean(employee.applicationForm?.otherSkills));
-                    setEditing(true);
-                  }}
-                >
-                  Edit Profile
-                </Button>
-                <Button variant="outlined" color="error" size="small" sx={pillButtonSx} onClick={() => setDeleteDialog(true)}>Remove</Button>
-              </>
+            {canEditOwnProfile && (
+              <Button
+                variant="outlined"
+                startIcon={<EditNote />}
+                sx={{ ...pillButtonSx, borderColor: GREEN_UI.borderStrong, color: GREEN_UI.greenDark }}
+                onClick={() => {
+                  setEditForm(employee);
+                  setSalaryDraft(null);
+                  setEditProfileTab('Personal');
+                  setPasswordFields(EMPTY_PASSWORD_FIELDS);
+                  setOtherSkillsEnabled(Boolean(employee.applicationForm?.otherSkills));
+                  setEditing(true);
+                }}
+              >
+                Edit Profile
+              </Button>
             )}
           </Box>
         </Box>
@@ -1130,7 +1101,7 @@ export default function EmployeeProfile() {
                 borderBottom: { xs: index < 2 ? '1px solid ' + GREEN_UI.border : 'none', md: 'none' },
               }}
             >
-              <Box sx={{ color: GREEN_UI.greenDark, display: 'flex' }}>{item.icon}</Box>
+              <Box sx={{ color: GREEN_UI.greenDark, width: 22, minWidth: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{item.icon}</Box>
               <Typography variant="body1" sx={{ color: GREEN_UI.muted, fontWeight: 500, wordBreak: 'break-word', lineHeight: 1.35 }}>
                 {item.value}
               </Typography>
@@ -1765,18 +1736,6 @@ export default function EmployeeProfile() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setPreviewDoc(null)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Delete Confirmation */}
-      <Dialog open={deleteDialog} onClose={() => setDeleteDialog(false)}>
-        <DialogTitle fontWeight={700}>Remove Employee</DialogTitle>
-        <DialogContent>
-          <Typography>Are you sure you want to permanently remove <strong>{employee.name}</strong> ({employee.id}) from the database? This cannot be undone.</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialog(false)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={handleDelete}>Remove Permanently</Button>
         </DialogActions>
       </Dialog>
 

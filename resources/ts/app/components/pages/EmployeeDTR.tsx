@@ -291,7 +291,7 @@ const printPaperSx = {
   overflow: "hidden",
 
   "@media print": {
-    position: "fixed",
+    position: "absolute",
     top: 0,
     left: 0,
     width: "100%",
@@ -308,7 +308,7 @@ const printPaperSx = {
 const printStyles = `
   @media print {
     @page {
-      size: A4 portrait;
+      size: A4 landscape;
       margin: 6mm;
     }
 
@@ -323,15 +323,44 @@ const printStyles = `
       print-color-adjust: exact !important;
     }
 
+    .dtr-print-area {
+      position: absolute !important;
+      inset: 0 auto auto 0 !important;
+      width: 100% !important;
+      max-width: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      page-break-inside: avoid !important;
+    }
+
+    .dtr-print-area .MuiTableContainer-root {
+      width: 100% !important;
+      max-width: none !important;
+      overflow: visible !important;
+    }
+
+    .dtr-print-area .dtr-table {
+      width: 100% !important;
+      min-width: 0 !important;
+      table-layout: fixed !important;
+    }
+
     .no-print {
       display: none !important;
     }
 
     .dtr-table th,
     .dtr-table td {
-      padding: 3px 4px !important;
-      font-size: 10.5px !important;
+      padding: 1.2px 2px !important;
+      font-size: 7pt !important;
       line-height: 1.05 !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere !important;
+    }
+
+    .dtr-print-area > * {
+      page-break-inside: avoid !important;
     }
   }
 `;
@@ -958,6 +987,11 @@ export default function EmployeeDTR() {
                     backgroundColor: "#fff",
                   }}
                 >
+                  <colgroup>
+                    {["4%", "5%", "7%", "7%", "7%", "7%", "7%", "7%", "5%", "5%", "5%", "5%", "5%", "24%"].map((width, index) => (
+                      <col key={index} style={{ width }} />
+                    ))}
+                  </colgroup>
                   <TableHead>
                     <TableRow>
                       <TableCell rowSpan={2} align="center" sx={tableHeaderCellSx}>
