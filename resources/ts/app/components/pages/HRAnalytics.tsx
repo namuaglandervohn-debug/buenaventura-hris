@@ -87,7 +87,7 @@ function MetricCard({ label, value, color = GREEN }: { label: string; value: str
   );
 }
 
-type AttendanceTotal = { month_number: number; present: number; late: number; absent: number; includes_demo: boolean };
+type AttendanceTotal = { day_number: number; present: number; late: number; absent: number; includes_demo: boolean };
 
 export default function HRAnalytics() {
   const monthOptions = useMemo(getMonthOptions, []);
@@ -105,7 +105,8 @@ export default function HRAnalytics() {
   const [monthlyRefresh, setMonthlyRefresh] = useState(0);
   const [attendanceRefresh, setAttendanceRefresh] = useState(0);
   const [attendance, setAttendance] = useState<{ scope: string; rows: AttendanceTotal[]; failed?: boolean }>();
-  const attendanceScope = `${reportingYear}:${outlet}`;
+  const attendanceScope = `${month}:${outlet}`;
+  const reportMonthLabel = `${monthOptions[reportingMonth - 1].label} ${reportingYear}`;
   const visibleMonth = loadedMonth || month;
 
   useEffect(() => {
@@ -142,8 +143,9 @@ export default function HRAnalytics() {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const { data: rows, error } = await supabase.rpc('hris_analytics_monthly_attendance', {
+        const { data: rows, error } = await supabase.rpc('hris_analytics_daily_attendance', {
           report_year: reportingYear,
+          report_month: reportingMonth,
           report_outlet: outlet === 'All Outlets' ? null : outlet,
         }).abortSignal(controller.signal);
         if (error) throw error;
@@ -160,7 +162,7 @@ export default function HRAnalytics() {
     };
     void load();
     return () => controller.abort();
-  }, [reportingYear, outlet, attendanceScope, attendanceRefresh]);
+  }, [reportingYear, reportingMonth, outlet, attendanceScope, attendanceRefresh]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -232,11 +234,11 @@ export default function HRAnalytics() {
   }, [employeeOutlets, data.demoRecords]);
   const applicantOutlets = useMemo(() => new Map(data.userAccounts.filter(row => row.applicant_id && row.outlet).map(row => [String(row.applicant_id), String(row.outlet)])), [data.userAccounts]);
   const inOutlet = (row: Row) => outlet === 'All Outlets' || outletOf(row, employeeOutlets).toLowerCase() === outlet.toLowerCase();
-  const demoEvaluations = data.demoRecords.filter(row => row.record_type === 'performance').map(row => ({
+  const demoEvaluations: Row[] = data.demoRecords.filter(row => row.record_type === 'performance').map(row => ({
     employee_id: row.employee_id, outlet: row.outlet, evaluation_period_end: row.record_date,
     final_weighted_score: row.score, status: row.status,
   }));
-  const demoRequests = data.demoRecords.filter(row => row.record_type === 'leave_request').map(row => ({
+  const demoRequests: Row[] = data.demoRecords.filter(row => row.record_type === 'leave_request').map(row => ({
     employee_id: row.employee_id, outlet: row.outlet, request_type: row.request_type,
     status: row.status, created_at: row.record_date,
   }));
@@ -247,8 +249,10 @@ export default function HRAnalytics() {
   const monthRequests = [...data.requests, ...demoRequests].filter(row => sameMonth(row.created_at || row.start_date, visibleMonth) && normalized(row.request_type).includes('leave') && inOutlet(row));
   const monthApplicants = [...data.applicants, ...demoApplicants].filter(row => sameMonth(row.created_at, visibleMonth) && (outlet === 'All Outlets' || String(row.outlet || applicantOutlets.get(String(row.applicant_id ?? '')) || '').toLowerCase() === outlet.toLowerCase()));
   const attendanceResult = attendance?.scope === attendanceScope ? attendance : undefined;
-  const attendanceByMonth = (attendanceResult?.rows ?? monthOptions.map(({ value }) => ({ month_number: value })))
-    .map(row => ({ ...row, month: monthOptions[row.month_number - 1]?.label }));
+  const daysInMonth = new Date(reportingYear, reportingMonth, 0).getDate();
+  const attendanceByDay = attendanceResult?.rows.length
+    ? attendanceResult.rows
+    : Array.from({ length: daysInMonth }, (_, index) => ({ day_number: index + 1 }));
   const hasAttendance = attendanceResult?.rows.some(row => row.present + row.late + row.absent > 0);
   const attendanceSubtitle = [
     attendanceResult?.rows.some(row => row.includes_demo) && 'Includes demo attendance',
@@ -376,13 +380,13 @@ export default function HRAnalytics() {
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
-          <ChartCard title={`Attendance Trends by Month (${reportingYear})`} subtitle={attendanceSubtitle}>
+          <ChartCard title={`Daily Attendance Trends · ${reportMonthLabel}`} subtitle={attendanceSubtitle}>
             <EmptyChart show={!hasAttendance} message={attendanceResult?.failed ? 'Attendance could not load' : attendanceResult ? undefined : 'Loading attendance…'} />
-            <ResponsiveContainer width="100%" height="100%"><LineChart data={attendanceByMonth} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height="100%"><LineChart data={attendanceByDay} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={BORDER} />
-              <XAxis dataKey="month" interval={0} tickFormatter={label => label.slice(0, 3)} tick={{ fill: MUTED, fontSize: 11 }} />
+              <XAxis dataKey="day_number" interval="preserveStartEnd" minTickGap={12} tick={{ fill: MUTED, fontSize: 11 }} />
               <YAxis width={0} allowDecimals={false} tick={false} axisLine={false} tickLine={false} />
-              <Tooltip {...tooltip} />
+              <Tooltip {...tooltip} labelFormatter={day => `${monthOptions[reportingMonth - 1].label} ${day}`} />
               <Legend />
               <Line type="monotone" dataKey="present" name="On time" stroke="#37a66b" strokeWidth={2.5} dot={false} />
               <Line type="monotone" dataKey="late" name="Late" stroke="#e3ad45" strokeWidth={2.5} dot={false} />

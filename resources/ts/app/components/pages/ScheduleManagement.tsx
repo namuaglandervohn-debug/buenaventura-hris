@@ -44,8 +44,10 @@ import { NO_OUTLET, OUTLETS } from '../../lib/constants';
 import { includeSelectedJobTitle } from '../../lib/jobTitles';
 import { useJobTitleOptions } from '../../lib/useJobTitleOptions';
 import { parseRegularScheduleShift, splitShiftExample } from '../../lib/regularScheduleShift';
-import { normalizePhotoShift, parseSchedulePhoto, readSchedulePhotoPage } from '../../lib/scheduleImageImport';
+import { normalizePhotoShift, parseSchedulePhoto, readSchedulePhotoPage, readScheduleWithCrop, UnreadableSchedulePhoto } from '../../lib/scheduleImageImport';
+import { findAutomaticScheduleCrop } from '../../lib/scheduleImageCrop';
 import ActionSnackbar from '../ActionSnackbar';
+import ScheduleImageCropDialog from '../ScheduleImageCropDialog';
 import ScheduleSwapRequests from './ScheduleSwapRequests';
 
 import { useAuth } from '../../context/AuthContext';
@@ -639,6 +641,8 @@ export default function ScheduleManagement() {
   const imageRef = useRef<HTMLInputElement>(null);
   const [importingExcel, setImportingExcel] = useState(false);
   const [importingImage, setImportingImage] = useState(false);
+  const [imageCropFile, setImageCropFile] = useState<File | null>(null);
+  const [imageCropError, setImageCropError] = useState('');
   const [imageReviewOpen, setImageReviewOpen] = useState(false);
   const [imageReviewRows, setImageReviewRows] = useState<ImageScheduleDraftRow[]>([]);
   const [imageReviewWeek, setImageReviewWeek] = useState('');
@@ -1546,6 +1550,41 @@ export default function ScheduleManagement() {
     return ranked[0].employee;
   };
 
+  type SchedulePhotoReader = (image: File | HTMLCanvasElement) => Promise<ReturnType<typeof parseSchedulePhoto>>;
+
+  const readImageSchedule = async (
+    employees: ScheduleEmployeeOption[],
+    readPhoto: (read: SchedulePhotoReader) => Promise<ReturnType<typeof parseSchedulePhoto> | null>,
+  ) => {
+    const { createWorker, PSM } = await import('tesseract.js');
+    const assets = new URL(`${import.meta.env.BASE_URL}ocr/`, window.location.origin).href;
+    const worker = await createWorker('eng', 1, {
+      workerPath: `${assets}worker.min.js`, corePath: assets, langPath: assets.replace(/\/$/, ''),
+      workerBlobURL: false,
+    });
+    try {
+      return await readPhoto(async image => {
+        const pages = [];
+        for (const mode of [PSM.AUTO, PSM.SPARSE_TEXT]) {
+          await worker.setParameters({ tessedit_pageseg_mode: mode });
+          const { data } = await worker.recognize(image, {}, { blocks: true });
+          pages.push(readSchedulePhotoPage(data));
+        }
+        return parseSchedulePhoto(pages, name => findEmployeeForPhotoRow(name, employees)?.employeeId);
+      });
+    } finally {
+      await worker.terminate();
+    }
+  };
+
+  const showImageReview = ({ rows, week }: ReturnType<typeof parseSchedulePhoto>) => {
+    setImageCropFile(null);
+    setImageReviewRows(rows);
+    setImageReviewWeek(week);
+    setImageReviewError('');
+    setImageReviewOpen(true);
+  };
+
   const handleImageScheduleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1561,29 +1600,35 @@ export default function ScheduleManagement() {
       if (file.size > 20 * 1024 * 1024) throw new Error('Choose an image smaller than 20 MB.');
       const currentEmployees = await loadScheduleEmployees();
       setEmployeeList(currentEmployees);
-      const { createWorker, PSM } = await import('tesseract.js');
-      const assets = new URL(`${import.meta.env.BASE_URL}ocr/`, window.location.origin).href;
-      const worker = await createWorker('eng', 1, {
-        workerPath: `${assets}worker.min.js`, corePath: assets, langPath: assets.replace(/\/$/, ''),
-        workerBlobURL: false,
-      });
-      try {
-        const pages = [];
-        for (const mode of [PSM.AUTO, PSM.SPARSE_TEXT]) {
-          await worker.setParameters({ tessedit_pageseg_mode: mode });
-          const { data } = await worker.recognize(file, {}, { blocks: true });
-          pages.push(readSchedulePhotoPage(data));
-        }
-        const { rows, week } = parseSchedulePhoto(pages, name => findEmployeeForPhotoRow(name, currentEmployees)?.employeeId);
-        setImageReviewRows(rows);
-        setImageReviewWeek(week);
-      } finally {
-        await worker.terminate();
+      const result = await readImageSchedule(currentEmployees, read =>
+        readScheduleWithCrop(file, read, findAutomaticScheduleCrop));
+      if (result) {
+        showImageReview(result);
+      } else {
+        setImageCropError('The schedule could not be read automatically. Adjust the crop and try again.');
+        setImageCropFile(file);
       }
-      setImageReviewError('');
-      setImageReviewOpen(true);
-    } catch (err: any) {
-      setSnackbar({ open: true, message: `Image import failed: ${err.message}`, severity: 'error' });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err instanceof Error ? `Image import failed: ${err.message}` : 'Image import failed.',
+        severity: 'error',
+      });
+    } finally {
+      setImportingImage(false);
+    }
+  };
+
+  const retryImageScheduleCrop = async (canvas: HTMLCanvasElement) => {
+    setImportingImage(true);
+    setImageCropError('');
+    try {
+      const result = await readImageSchedule(employeeList, read => read(canvas));
+      if (result) showImageReview(result);
+    } catch (err) {
+      setImageCropError(err instanceof UnreadableSchedulePhoto
+        ? `${err.message} Adjust the crop to include every weekday heading or try a clearer photo.`
+        : 'The cropped photo could not be read. Try again or upload a clearer photo.');
     } finally {
       setImportingImage(false);
     }
@@ -3020,6 +3065,15 @@ export default function ScheduleManagement() {
         </DialogActions>
       </Dialog>
 
+      {imageCropFile && (
+        <ScheduleImageCropDialog
+          file={imageCropFile}
+          busy={importingImage}
+          error={imageCropError}
+          onClose={() => setImageCropFile(null)}
+          onRetry={retryImageScheduleCrop}
+        />
+      )}
       <Dialog open={imageReviewOpen} onClose={() => !saving && setImageReviewOpen(false)} maxWidth="xl" fullWidth>
         <DialogTitle sx={{ bgcolor: '#f3fbf2', color: GREEN_UI.text, fontWeight: 800 }}>Review imported schedule image</DialogTitle>
         <DialogContent sx={{ bgcolor: '#fbfff9', pt: 2.5 }}>

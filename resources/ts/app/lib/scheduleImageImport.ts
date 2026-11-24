@@ -1,10 +1,32 @@
 import type { Page, Word } from 'tesseract.js';
-import { parseRegularScheduleShift } from './regularScheduleShift';
+import { parseRegularScheduleShift } from './regularScheduleShift.ts';
 
 export const schedulePhotoDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 type Day = (typeof schedulePhotoDays)[number];
 type PhotoWord = Pick<Word, 'text' | 'bbox'>;
 type PhotoPage = { words: PhotoWord[]; text: string };
+
+export class UnreadableSchedulePhoto extends Error {}
+
+export async function readScheduleWithCrop<Original, Cropped, Result>(
+  original: Original,
+  read: (image: Original | Cropped) => Promise<Result>,
+  findCrop: (image: Original) => Promise<Cropped | null>,
+): Promise<Result | null> {
+  try {
+    return await read(original);
+  } catch (error) {
+    if (!(error instanceof UnreadableSchedulePhoto)) throw error;
+  }
+  const crop = await findCrop(original);
+  if (!crop) return null;
+  try {
+    return await read(crop);
+  } catch (error) {
+    if (!(error instanceof UnreadableSchedulePhoto)) throw error;
+    return null;
+  }
+}
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const centerX = ({ bbox }: PhotoWord) => (bbox.x0 + bbox.x1) / 2;
@@ -106,7 +128,7 @@ export function normalizePhotoShift(value: string): string | null {
 export function parseSchedulePhoto(pages: PhotoPage[], matchEmployee: (name: string) => string | undefined) {
   const words = pages.flatMap(page => page.words);
   const header = findHeader(words);
-  if (!header) throw new Error('The weekday headings could not be detected. Try cropping the photo to the schedule table, including its weekday headings.');
+  if (!header) throw new UnreadableSchedulePhoto('The weekday headings could not be detected.');
   const firstBoundary = header.first - header.gap / 2;
   const positionHeader = words.find(word => /^position$/i.test(word.text) && Math.abs(centerY(word) - header.y) < 24);
   const positionWords = words.filter(word => word.bbox.x0 < firstBoundary
@@ -152,6 +174,8 @@ export function parseSchedulePhoto(pages: PhotoPage[], matchEmployee: (name: str
     y - previous.y <= tolerance * 2
     && (row.employeeId ? row.employeeId === previous.row.employeeId : row.detectedName === previous.row.detectedName),
   )).map(candidate => candidate.row);
-  if (!rows.length) throw new Error('No employee rows were detected under the weekday headings.');
+  if (!rows.some(row => row.uncertainDays.length < schedulePhotoDays.length)) {
+    throw new UnreadableSchedulePhoto('No readable shifts were found under the weekday headings.');
+  }
   return { rows, week: readWeek(pages, header) };
 }
