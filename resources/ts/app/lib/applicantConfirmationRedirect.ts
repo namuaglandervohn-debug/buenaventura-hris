@@ -1,21 +1,12 @@
-const publicApplicantUrl = 'https://app-dev-repository.vercel.app/applicant';
+import { getApplicationDestination } from './applicationNavigation.ts';
 
-export function applicantConfirmationRedirect(origin: string) {
-  const url = new URL(origin);
-  const { hostname } = url;
-  const isLoopback = hostname === 'localhost' || hostname.endsWith('.localhost')
-    || /^127(?:\.\d{1,3}){3}$/.test(hostname) || hostname === '[::1]';
-  if (isLoopback) {
-    return publicApplicantUrl;
-  }
-  return new URL('/applicant', url).href;
+export function applicantConfirmationRedirect(origin: string, next: string | null = null) {
+  const url = new URL('/applicant', origin);
+  const application = getApplicationDestination(next);
+  if (application) url.searchParams.set('next', application);
+  return url.href;
 }
 
 export function employeeConfirmationRedirect(origin: string) {
-  const url = new URL(origin);
-  const { hostname } = url;
-  const isLoopback = hostname === 'localhost' || hostname.endsWith('.localhost')
-    || /^127(?:\.\d{1,3}){3}$/.test(hostname) || hostname === '[::1]';
-  const base = isLoopback ? new URL(publicApplicantUrl).origin : url.origin;
-  return new URL('/login?employeeRegistration=1', base).href;
+  return new URL('/login?employeeRegistration=1', origin).href;
 }

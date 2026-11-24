@@ -19,7 +19,6 @@ export const profileDetailsSx = {
 
 export const profileFieldSx = {
   '& .MuiOutlinedInput-root': {
-    borderRadius: '16px',
     backgroundColor: '#fbfef9',
     transition: 'all 180ms ease',
     '& fieldset': { borderColor: border },

@@ -180,7 +180,6 @@ const pillButtonSx = {
 
 const softTextFieldSx = {
   "& .MuiOutlinedInput-root": {
-    borderRadius: "16px",
     backgroundColor: "#fbfef9",
     transition: "all 180ms ease",
     "& fieldset": { borderColor: GREEN_UI.border },
@@ -2973,7 +2972,6 @@ export default function AttendanceMonitoring() {
             overflow: "hidden",
             "& .MuiDialogTitle-root": { color: GREEN_UI.text },
             "& .MuiOutlinedInput-root": {
-              borderRadius: "16px",
               backgroundColor: "#fbfef9",
               "& fieldset": { borderColor: GREEN_UI.border },
               "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
@@ -3063,7 +3061,6 @@ export default function AttendanceMonitoring() {
             overflow: "hidden",
             "& .MuiDialogTitle-root": { color: GREEN_UI.text },
             "& .MuiOutlinedInput-root": {
-              borderRadius: "16px",
               backgroundColor: "#fbfef9",
               "& fieldset": { borderColor: GREEN_UI.border },
               "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
@@ -3258,7 +3255,6 @@ export default function AttendanceMonitoring() {
             overflow: "hidden",
             "& .MuiDialogTitle-root": { color: GREEN_UI.text },
             "& .MuiOutlinedInput-root": {
-              borderRadius: "16px",
               backgroundColor: "#fbfef9",
               "& fieldset": { borderColor: GREEN_UI.border },
               "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
@@ -3343,7 +3339,6 @@ export default function AttendanceMonitoring() {
             overflow: "hidden",
             "& .MuiDialogTitle-root": { color: GREEN_UI.text },
             "& .MuiOutlinedInput-root": {
-              borderRadius: "16px",
               backgroundColor: "#fbfef9",
               "& fieldset": { borderColor: GREEN_UI.border },
               "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },

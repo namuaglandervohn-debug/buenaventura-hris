@@ -3,8 +3,10 @@ import { Alert, Button, CircularProgress, Container, IconButton, InputAdornment,
 import { Visibility, VisibilityOff } from '../bootstrap/icons';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import AuthBackground from '../AuthBackground';
+import { getAuthEmailLoginPath } from '../../lib/authEmail';
 
 export default function ApplicantPasswordReset({ client }: { client: SupabaseClient }) {
+  const loginPath = getAuthEmailLoginPath(window.location.search);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -69,7 +71,7 @@ export default function ApplicantPasswordReset({ client }: { client: SupabaseCli
             {session === undefined && <CircularProgress size={24} aria-label="Checking password reset link" />}
             {session === null && <Alert severity="error">This reset link is invalid or expired. Request a new one from the sign-in page.</Alert>}
             {saved && <Alert severity="success">Password updated. Sign in with your new password.</Alert>}
-            {(saved || session === null) && <Button href="/login" sx={{ alignSelf: 'flex-start' }}>Back to sign in</Button>}
+            {(saved || session === null) && <Button href={loginPath} sx={{ alignSelf: 'flex-start' }}>Back to sign in</Button>}
             {session && !saved && (
               <Stack component="form" onSubmit={submit} spacing={2}>
                 <Typography variant="body2" color="text.secondary">{session.user.email}</Typography>

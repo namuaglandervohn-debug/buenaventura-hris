@@ -30,8 +30,10 @@ import {
 import AuthBackground from "../AuthBackground";
 import BrandLogo from "../BrandLogo";
 import { COMPANY } from "../../lib/constants";
-import { consumeSignupEmailConfirmation, supabase } from "../../lib/supabaseClient";
-import { applicantConfirmationRedirect } from "../../lib/applicantConfirmationRedirect";
+import { consumeAuthEmailLinkResult, supabase } from "../../lib/supabaseClient";
+import { applicantConfirmationRedirect, employeeConfirmationRedirect } from "../../lib/applicantConfirmationRedirect";
+import { getSignInErrorMessage } from "../../lib/authEmail";
+import { getApplicationDestination, getPostLoginPath } from "../../lib/applicationNavigation";
 import type { SignInGroup } from "../../lib/authSession";
 
 const signInChoices: { value: SignInGroup; label: string }[] = [
@@ -54,24 +56,31 @@ export default function LoginPage() {
   const [emailNotice, setEmailNotice] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const submitting = useRef(false);
+  const showingEmailLinkResult = useRef(false);
   const [signingIn, setSigningIn] = useState(false);
   const { login, user, loading, logout } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const freshLogin = searchParams.get("fresh") === "1";
-  const next = searchParams.get('next') ?? '';
-  const nextQuery = /^\/apply(?:\?|$)/.test(next) ? `next=${encodeURIComponent(next)}` : '';
+  const applicationDestination = getApplicationDestination(searchParams.get('next'));
+  const postLoginPath = getPostLoginPath(user?.role, applicationDestination);
   const employeeRegistration = searchParams.get('employeeRegistration') === '1';
-  const applicantPath = nextQuery ? `/applicant?${nextQuery}` : '/applicant';
-  const registrationPath = `/applicant?mode=register${nextQuery ? `&${nextQuery}` : ''}`;
-  const [signInGroup, setSignInGroup] = useState<SignInGroup | null>(registrationEmail || nextQuery ? 'applicant' : null);
+  const registrationPath = `/applicant?mode=register${applicationDestination ? `&next=${encodeURIComponent(applicationDestination)}` : ''}`;
+  const [selectedSignInGroup, setSignInGroup] = useState<SignInGroup | null>(registrationEmail ? 'applicant' : null);
+  const signInGroup = applicationDestination ? 'applicant' : selectedSignInGroup;
 
   useEffect(() => {
-    if (consumeSignupEmailConfirmation()) {
+    const result = consumeAuthEmailLinkResult();
+    if (result) showingEmailLinkResult.current = true;
+    if (result === 'signup') {
       setSignInGroup(employeeRegistration ? 'employee' : 'applicant');
       setNotice(employeeRegistration
         ? 'Email verified. Your employee account still needs HR approval before you can sign in.'
         : 'Email verified. Sign in with your email and password.');
+    } else if (result === 'wrong-project') {
+      setError('This email link belongs to a different HRIS site. Return to the site where you registered to sign in or request a new link.');
+    } else if (result === 'invalid-link') {
+      setError('This email link is invalid or expired. If you already confirmed your email, try signing in. You can also request a new link below.');
     }
   }, []);
 
@@ -82,10 +91,10 @@ export default function LoginPage() {
       return;
     }
 
-    if (!loading && user) {
-      navigate(user.role === 'applicant' ? applicantPath : '/dashboard', { replace: true });
+    if (!loading && postLoginPath && !showingEmailLinkResult.current) {
+      navigate(postLoginPath, { replace: true });
     }
-  }, [applicantPath, freshLogin, loading, logout, navigate, setSearchParams, user]);
+  }, [freshLogin, loading, logout, navigate, postLoginPath, setSearchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,16 +104,14 @@ export default function LoginPage() {
       return;
     }
     submitting.current = true;
+    showingEmailLinkResult.current = false;
     setSigningIn(true);
     setError("");
     setNotice('');
     try {
       await login(email, password, signInGroup);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Invalid email or password";
-      setError(message === 'Invalid login credentials'
-        ? 'Email or password is incorrect. Use Forgot password? to reset an existing password.'
-        : message);
+      setError(getSignInErrorMessage(err));
     } finally {
       submitting.current = false;
       setSigningIn(false);
@@ -134,7 +141,9 @@ export default function LoginPage() {
 
     setSendingEmail(true);
     try {
-      const redirectTo = applicantConfirmationRedirect(window.location.origin);
+      const redirectTo = emailDialog.action === 'confirm' && (signInGroup === 'employee' || employeeRegistration)
+        ? employeeConfirmationRedirect(window.location.origin)
+        : applicantConfirmationRedirect(window.location.origin, applicationDestination);
       const { error } = emailDialog.action === 'reset'
         ? await supabase.auth.resetPasswordForEmail(address, { redirectTo })
         : await supabase.auth.resend({ type: 'signup', email: address, options: { emailRedirectTo: redirectTo } });
@@ -162,7 +171,6 @@ export default function LoginPage() {
     },
     "& .MuiOutlinedInput-root": {
       minHeight: 54,
-      borderRadius: "16px",
       backgroundColor: "rgba(255,255,255,0.92)",
       boxShadow: "0 10px 24px rgba(26, 83, 55, 0.06)",
       transition: "all 180ms ease",
@@ -313,7 +321,7 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} noValidate>
               <Typography id="sign-in-choice-label" variant="subtitle2" sx={{ color: '#125335', mb: 1 }}>Sign in as</Typography>
               <Box role="group" aria-labelledby="sign-in-choice-label" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {signInChoices.map(({ value, label }) => (
+                {signInChoices.filter(({ value }) => !applicationDestination || value === 'applicant').map(({ value, label }) => (
                   <Button key={value} type="button" aria-pressed={signInGroup === value}
                     variant={signInGroup === value ? 'contained' : 'outlined'} disabled={loading || signingIn}
                     onClick={() => { setSignInGroup(value); setError(''); }}
@@ -427,6 +435,13 @@ export default function LoginPage() {
               <Button
                 component={RouterLink}
                 to={registrationPath}
+                disabled={loading || signingIn}
+                onClick={(event) => {
+                  if ((applicationDestination || showingEmailLinkResult.current) && user && user.role !== 'applicant'
+                    && event.button === 0 && !event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey) {
+                    logout();
+                  }
+                }}
                 fullWidth
                 variant="outlined"
                 sx={{ mt: { xs: 3.5, sm: 4.5 }, minHeight: 46, borderRadius: '999px', color: '#087443', borderColor: '#087443', fontWeight: 700 }}

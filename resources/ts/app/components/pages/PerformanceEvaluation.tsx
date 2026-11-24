@@ -234,7 +234,6 @@ const pillButtonSx = {
 
 const softTextFieldSx = {
   "& .MuiOutlinedInput-root": {
-    borderRadius: "16px",
     backgroundColor: "#fbfef9",
     transition: "all 180ms ease",
     "& fieldset": { borderColor: GREEN_UI.border },

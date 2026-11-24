@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/admin/user-accounts.js": {
-      "includeFiles": "resources/views/emails/account-welcome.html"
+      "includeFiles": "resources/views/emails/{account-welcome,password-reset}.html"
     },
     "api/applications/hired-account.js": {
       "includeFiles": "resources/views/emails/hired-welcome.html"

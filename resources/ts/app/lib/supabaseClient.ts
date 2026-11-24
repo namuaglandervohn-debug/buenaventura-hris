@@ -1,35 +1,29 @@
 import { createClient } from "@supabase/supabase-js";
 import { projectId, publicAnonKey } from "../../utils/supabase/info";
 import { createTabAuthOptions } from './authStorage';
+import { getAuthEmailCallback, getAuthEmailLoginPath } from './authEmail';
 
 const url = import.meta.env.VITE_SUPABASE_URL || `https://${projectId}.supabase.co`;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || publicAnonKey;
 const inBrowser = typeof window !== 'undefined';
-const callback = new URLSearchParams(inBrowser ? window.location.hash.slice(1) : '');
-const recoveryCallback = callback.get('type') === 'recovery';
-const signupCallback = callback.get('type') === 'signup';
-let signupEmailConfirmed = signupCallback && Boolean(callback.get('access_token') && callback.get('refresh_token')) && !callback.has('error');
+const callback = inBrowser ? getAuthEmailCallback(window.location.hash, url) : null;
+const recoveryCallback = callback === 'recovery';
+let emailLinkResult = recoveryCallback ? null : callback;
 
-export function consumeSignupEmailConfirmation() {
-  const confirmed = signupEmailConfirmed;
-  signupEmailConfirmed = false;
-  return confirmed;
+export function consumeAuthEmailLinkResult() {
+  const result = emailLinkResult;
+  emailLinkResult = null;
+  return result;
 }
 
-if (inBrowser && signupCallback) {
-  // Supabase has already verified the email. Discard the callback session
-  // before the browser client can adopt it.
-  const destination = window.location.pathname === '/applicant'
-    ? window.location.pathname + window.location.search
-    : window.location.pathname === '/login' && new URLSearchParams(window.location.search).has('employeeRegistration')
-      ? window.location.pathname + window.location.search
-      : '/applicant';
-  window.history.replaceState(window.history.state, '', destination);
+if (inBrowser && callback && !recoveryCallback) {
+  // A confirmation link must never replace a tab's existing HRIS session.
+  window.history.replaceState(window.history.state, '', getAuthEmailLoginPath(window.location.search));
 }
 
 export const supabase = createClient(url, key, {
   auth: inBrowser
-    ? { ...createTabAuthOptions(window.sessionStorage), detectSessionInUrl: !recoveryCallback && !signupCallback }
+    ? { ...createTabAuthOptions(window.sessionStorage), detectSessionInUrl: callback === null }
     : { persistSession: false },
 });
 

@@ -11,11 +11,12 @@ function fixture({ role = 'hr_admin', failProfile = false, loseProfileResponse =
     const url = new URL(input);
     const method = init.method ?? 'GET';
     const body = init.body ? JSON.parse(init.body) : null;
-    calls.push({ path: url.pathname, method, body, idempotencyKey: new Headers(init.headers).get('Idempotency-Key') });
+    calls.push({ path: url.pathname, method, body, redirectTo: url.searchParams.get('redirect_to'), idempotencyKey: new Headers(init.headers).get('Idempotency-Key') });
     if (url.origin === 'https://api.resend.com' && url.pathname === '/emails') {
       return json(mailStatus === 200 ? { id: 'test-message' } : { message: 'Unavailable' }, mailStatus);
     }
     if (url.pathname === '/auth/v1/user') return json({ id: 'admin-auth', email: 'admin@example.test' });
+    if (url.pathname === '/auth/v1/admin/generate_link') return json({ action_link: 'https://supabase.test/verify?type=recovery' });
     if (url.pathname === '/auth/v1/admin/users') return json({ id: employeeAuthId }, 201);
     if (url.pathname === `/auth/v1/admin/users/${employeeAuthId}` && method === 'DELETE') return json({});
     if (url.pathname === `/auth/v1/admin/users/${employeeAuthId}`) return json({ id: employeeAuthId, email: 'employee@example.test' });
@@ -45,7 +46,7 @@ function fixture({ role = 'hr_admin', failProfile = false, loseProfileResponse =
     throw new Error('Unexpected request: ' + url.pathname);
   };
   const handler = createUserAccountsHandler({
-    env: { SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'test-key', RESEND_API_KEY: 'test-mail-key' },
+    env: { APP_URL: 'https://hris.example.test', SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'test-key', RESEND_API_KEY: 'test-mail-key' },
     fetcher: fetch,
     clientFactory: (url, key, options) => createClient(url, key, { ...options, global: { fetch } }),
   });
@@ -61,7 +62,7 @@ function fixture({ role = 'hr_admin', failProfile = false, loseProfileResponse =
       ? { action: 'update_account_password', user_id: 'USR-2026-0002', password: 'Example<&>123', auth_user_id: 'ignored-id' }
       : passwordUpdate
       ? { action: 'update_employee_password', employee_id: 'EMP001', password: 'Example<&>123', auth_user_id: 'ignored-id' }
-      : { name: 'Test Employee', email: 'employee@example.test', password: 'Example<&>123', role: 'employee', employee_id: 'EMP001' },
+      : { name: 'Test Employee', email: 'employee@example.test', password: 'Example<&>123', role: 'employee', employee_id: 'EMP001', position: 'Staff' },
   }, response);
   return { run, calls, response };
 }
@@ -84,6 +85,7 @@ test('creates the employee record before inserting the linked account', async ()
   assert.deepEqual(mail.to, ['employee@example.test']);
   assert.equal(mail.subject, 'Welcome to Buenaventura Estate');
   assert.match(mail.html, /Example&lt;&amp;&gt;123/);
+  assert.match(mail.html, /https:\/\/hris\.example\.test\/login/);
   assert.match(mail.text, /Example<&>123/);
   assert.doesNotMatch(JSON.stringify(response.body), /Example<&>123/);
 });
@@ -125,7 +127,11 @@ test('updates the linked employee login without returning the password', async (
   await run();
   assert.equal(response.code, 200);
   const [write] = calls.filter(call => call.method !== 'GET');
-  assert.equal(calls.filter(call => call.method !== 'GET').length, 1);
+  assert.deepEqual(calls.filter(call => call.method !== 'GET').map(call => call.path),
+    [`/auth/v1/admin/users/${employeeAuthId}`, '/auth/v1/admin/generate_link', '/emails']);
+  assert.equal(calls.find(call => call.path === '/auth/v1/admin/generate_link').redirectTo, 'https://hris.example.test/applicant');
+  assert.match(calls.find(call => call.path === '/emails').body.html, /https:\/\/supabase\.test\/verify\?type=recovery/);
+  assert.equal(response.body.password_email_sent, true);
   assert.equal(write.path, `/auth/v1/admin/users/${employeeAuthId}`);
   assert.equal(write.method, 'PUT');
   assert.equal(write.body.password, 'Example<&>123');
@@ -148,7 +154,7 @@ test('User Accounts resets a linked staff login by account ID and requires HR', 
   assert.equal(admin.response.code, 200);
   assert.equal(admin.response.body.password_updated, true);
   assert.deepEqual(admin.calls.filter(call => call.method !== 'GET').map(call => [call.method, call.path]),
-    [['PUT', `/auth/v1/admin/users/${employeeAuthId}`]]);
+    [['PUT', `/auth/v1/admin/users/${employeeAuthId}`], ['POST', '/auth/v1/admin/generate_link'], ['POST', '/emails']]);
   assert.doesNotMatch(JSON.stringify(admin.response.body), /Example<&>123/);
 
   const gm = fixture({ role: 'general_manager', resetFromUserAccounts: true });

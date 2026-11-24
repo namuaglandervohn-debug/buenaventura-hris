@@ -58,21 +58,29 @@ test('database failure is still a failed submission, with no email or success ca
 
 test('client requires an explicit sent acknowledgement, not an HTML fallback or skipped email', async () => {
   for (const response of [Response.json({ sent: false }), new Response('<html>fallback</html>'), Response.json({ message: 'API key is invalid' }, { status: 503 })]) {
-    await assert.rejects(sendApplicantConfirmation(payload, async () => response), /not delivered/);
+    await assert.rejects(sendApplicantConfirmation(payload.applicantId, 'applicant-token', async () => response), /not delivered/);
   }
-  await sendApplicantConfirmation(payload, async (_url, options) => {
+  await sendApplicantConfirmation(payload.applicantId, 'applicant-token', async (_url, options) => {
     assert.ok(options.signal instanceof AbortSignal);
     assert.equal(JSON.parse(options.body).applicant_id, payload.applicantId);
+    assert.equal(options.headers.Authorization, 'Bearer applicant-token');
+    assert.equal(JSON.parse(options.body).email, undefined);
     return Response.json({ sent: true });
   });
 });
 
-async function invokeEmail(fetcher, env = { RESEND_API_KEY: ' test-resend-key\n' }) {
+async function invokeEmail(fetcher, env = { RESEND_API_KEY: ' test-resend-key\n' }, overrides = {}) {
   const response = {
     headers: {}, status(code) { this.statusCode = code; return this; },
     setHeader(key, value) { this.headers[key] = value; }, end(value) { this.body = JSON.parse(value); },
   };
-  await handleApplicantEmail({ method: 'POST', body: { applicant_id: payload.applicantId, email: payload.email, name: payload.name, position: payload.position } }, response, { env, fetcher });
+  const loadApplication = overrides.loadApplication ?? (async (token, id) => {
+    assert.equal(token, 'applicant-token');
+    assert.equal(id, payload.applicantId);
+    return { auth_user_id: 'applicant-user', email: payload.email, name: payload.name, position_applied: payload.position };
+  });
+  await handleApplicantEmail({ method: 'POST', headers: overrides.headers ?? { authorization: 'Bearer applicant-token' },
+    body: { applicant_id: payload.applicantId, email: 'ignored@example.test' } }, response, { env, fetcher, loadApplication });
   return response;
 }
 
@@ -80,12 +88,22 @@ test('email endpoint trims server credentials and acknowledges accepted email', 
   const response = await invokeEmail(async (url, options) => {
     assert.equal(url, 'https://api.resend.com/emails');
     assert.equal(options.headers.Authorization, 'Bearer test-resend-key');
+    assert.equal(options.headers['Idempotency-Key'], `applicant-id/applicant-user/${payload.applicantId}`);
+    assert.deepEqual(JSON.parse(options.body).to, [payload.email]);
     assert.ok(options.signal instanceof AbortSignal);
     return Response.json({ id: 'mail-id' });
   });
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.sent, true);
   assert.equal(response.headers['Cache-Control'], 'no-store');
+});
+
+test('Applicant ID emails require a session and a saved application owned by that session', async () => {
+  const noMail = () => assert.fail('Must not contact the provider');
+  const missingSession = await invokeEmail(noMail, undefined, { headers: {}, loadApplication: () => assert.fail('Must not query an anonymous request') });
+  assert.equal(missingSession.statusCode, 401);
+  const wrongOwner = await invokeEmail(noMail, undefined, { loadApplication: async () => null });
+  assert.equal(wrongOwner.statusCode, 403);
 });
 
 test('invalid mail key is handled without exposing provider configuration errors to applicants', async (t) => {

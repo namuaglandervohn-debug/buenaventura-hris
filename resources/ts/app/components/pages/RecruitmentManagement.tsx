@@ -262,7 +262,6 @@ const statusChipSx = (status: AppStatus) => {
 
 const softTextFieldSx = {
   '& .MuiOutlinedInput-root': {
-    borderRadius: '16px',
     backgroundColor: '#fbfef9',
     transition: 'all 180ms ease',
     '& fieldset': { borderColor: GREEN_UI.border },
@@ -2829,7 +2828,7 @@ export default function RecruitmentManagement() {
                 InputLabelProps={{ shrink: true }}
                 required
                 sx={softTextFieldSx}
-/>
+              />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
@@ -2840,8 +2839,8 @@ export default function RecruitmentManagement() {
                 value={iForm.interviewTime}
                 onChange={event => setIForm({ ...iForm, interviewTime: event.target.value })}
                 InputLabelProps={{ shrink: true }}
-                              sx={softTextFieldSx}
-/>
+                sx={softTextFieldSx}
+              />
             </Grid>
             <Grid size={12}>
               <TextField
@@ -2850,8 +2849,8 @@ export default function RecruitmentManagement() {
                 required
                 value={iForm.interviewLocation}
                 onChange={event => setIForm({ ...iForm, interviewLocation: event.target.value })}
-                              sx={softTextFieldSx}
-/>
+                sx={softTextFieldSx}
+              />
             </Grid>
             <Grid size={12}>
               <TextField
@@ -2862,8 +2861,8 @@ export default function RecruitmentManagement() {
                 value={iForm.interviewNotes}
                 onChange={event => setIForm({ ...iForm, interviewNotes: event.target.value })}
                 placeholder="e.g. Please bring original documents and 2 valid IDs."
-                              sx={softTextFieldSx}
-/>
+                sx={softTextFieldSx}
+              />
             </Grid>
           </Grid>
         </DialogContent>
@@ -2871,11 +2870,10 @@ export default function RecruitmentManagement() {
           <Button onClick={() => setInterviewDialog(false)} sx={{ ...pillButtonSx }}>Cancel</Button>
           <Button
             variant="contained"
-            color="info"
             startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <CalendarMonth />}
             onClick={handleScheduleInterview}
             disabled={saving || !iForm.interviewDate || !iForm.interviewTime || !iForm.interviewLocation.trim()}
-            sx={{ ...pillButtonSx, bgcolor: GREEN_UI.green, '&:hover': { bgcolor: GREEN_UI.greenDark } }}
+            sx={pillButtonSx}
           >
             {saving ? 'Saving…' : 'Confirm Interview Schedule'}
           </Button>

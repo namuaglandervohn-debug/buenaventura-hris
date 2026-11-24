@@ -1,3 +1,6 @@
+import { createClient } from '@supabase/supabase-js';
+import { createSupabaseFetch } from '../../lib/supabase-request.js';
+
 const json = (response, status, payload) => {
   response.status(status).setHeader('Content-Type', 'application/json');
   response.end(JSON.stringify(payload));
@@ -5,6 +8,7 @@ const json = (response, status, payload) => {
 
 const readBody = async (request) => {
   if (request.body && typeof request.body === 'object') return request.body;
+  if (typeof request.body === 'string') return JSON.parse(request.body);
 
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -22,7 +26,25 @@ const escapeHtml = (value) =>
 
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? '').trim());
 
-export async function handleApplicantEmail(request, response, { env = process.env, fetcher = fetch } = {}) {
+async function loadOwnedApplication(token, applicantId, env) {
+  const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Application lookup is not configured.');
+  const admin = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: createSupabaseFetch() },
+  });
+  const { data, error } = await admin.auth.getUser(token);
+  if (error && ![401, 403].includes(error.status)) throw error;
+  if (!data?.user?.id || !data.user.email) return null;
+
+  const result = await admin.from('applicants').select('auth_user_id,email,name,position_applied')
+    .eq('applicant_id', applicantId).eq('auth_user_id', data.user.id).maybeSingle();
+  if (result.error) throw result.error;
+  return result.data?.email?.trim().toLowerCase() === data.user.email.trim().toLowerCase() ? result.data : null;
+}
+
+export async function handleApplicantEmail(request, response, { env = process.env, fetcher = fetch, loadApplication = loadOwnedApplication } = {}) {
   response.setHeader('Cache-Control', 'no-store');
   if (request.method !== 'POST') {
     return json(response, 405, { message: 'Method not allowed.' });
@@ -35,14 +57,10 @@ export async function handleApplicantEmail(request, response, { env = process.en
     return json(response, 400, { message: 'Invalid request body.' });
   }
 
-  const applicantId = String(data.applicant_id ?? '').trim();
-  const email = String(data.email ?? '').trim().toLowerCase();
-  const applicantName = String(data.name ?? '').trim() || 'Applicant';
-  const position = String(data.position ?? '').trim();
-
-  if (!applicantId || !isEmail(email)) {
-    return json(response, 422, { message: 'Please enter a valid email address.' });
-  }
+  const token = /^Bearer\s+(\S+)$/i.exec(request.headers?.authorization ?? '')?.[1];
+  if (!token) return json(response, 401, { sent: false, message: 'Sign in again to request your Applicant ID email.' });
+  const applicantId = typeof data?.applicant_id === 'string' ? data.applicant_id.trim() : '';
+  if (!applicantId || applicantId.length > 40) return json(response, 422, { sent: false, message: 'A valid Applicant ID is required.' });
 
   const unavailable = () => json(response, 503, { sent: false, code: 'EMAIL_SERVICE_UNAVAILABLE', message: 'Confirmation email is temporarily unavailable. Your application remains saved; please keep your Applicant ID.' });
   const apiKey = String(env.RESEND_API_KEY ?? '').trim();
@@ -50,6 +68,14 @@ export async function handleApplicantEmail(request, response, { env = process.en
     console.warn('Applicant email unavailable: RESEND_API_KEY is not configured.');
     return unavailable();
   }
+  const application = await loadApplication(token, applicantId, env).catch(() => undefined);
+  if (application === undefined) return unavailable();
+  if (!application || !isEmail(application.email)) {
+    return json(response, 403, { sent: false, message: 'This application is unavailable for your account.' });
+  }
+  const email = application.email.trim().toLowerCase();
+  const applicantName = application.name?.trim() || 'Applicant';
+  const position = application.position_applied?.trim() || '';
 
   const appName = env.APP_NAME || 'Buenaventura HRIS';
   const fromAddress = env.RESEND_FROM_ADDRESS || 'no-reply@buenaventura-hris.me';
@@ -90,6 +116,7 @@ export async function handleApplicantEmail(request, response, { env = process.en
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        'Idempotency-Key': `applicant-id/${application.auth_user_id}/${applicantId}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },

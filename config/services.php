@@ -24,6 +24,8 @@ return [
         'from_name' => env('RESEND_FROM_NAME', env('MAIL_FROM_NAME', env('APP_NAME', 'Buenaventura HRIS'))),
     ],
 
+    'hris_email_origin' => env('HRIS_EMAIL_ORIGIN'),
+
     'supabase' => [
         'url' => env('SUPABASE_URL', env('VITE_SUPABASE_URL')),
         'anon_key' => env('SUPABASE_ANON_KEY', env('VITE_SUPABASE_ANON_KEY')),

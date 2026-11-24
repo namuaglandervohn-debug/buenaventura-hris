@@ -290,7 +290,6 @@ const dialogSectionTitleSx = {
 const textFieldSx = {
   minWidth: 0,
   "& .MuiOutlinedInput-root": {
-    borderRadius: "16px",
     backgroundColor: "#fbfef9",
     transition: "all 180ms ease",
     "& fieldset": { borderColor: GREEN_UI.border },
@@ -1139,20 +1138,17 @@ export default function JobPostingManagement() {
       <Dialog
         open={open}
         onClose={handleCloseDialog}
-        maxWidth="lg"
-        fullWidth
         fullScreen={isMobile}
-        PaperProps={{
-          sx: {
+        style={{ "--hris-modal-width": "920px" }}
+        sx={{
+          "& .modal-content.MuiDialog-paper": {
             borderRadius: { xs: 0, sm: "30px" },
-            width: { xs: "100%", sm: "min(920px, calc(100% - 48px))" },
-            m: { xs: 0, sm: 2 },
-            overflow: "hidden",
             border: `1px solid ${GREEN_UI.border}`,
             background: "#fbfff9",
             boxShadow: "0 28px 70px rgba(27, 73, 37, 0.18)",
           },
         }}
+        PaperProps={{ sx: { flex: 1 } }}
       >
         <DialogTitle
           sx={{

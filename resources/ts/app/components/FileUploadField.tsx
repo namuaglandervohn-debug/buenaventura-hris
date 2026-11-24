@@ -119,7 +119,7 @@ export default function FileUploadField({
             : error
             ? 'error.main'
             : 'rgba(31,122,71,0.30)',
-          borderRadius: 3,
+          borderRadius: 'var(--hris-field-radius)',
           p: 2.5,
           textAlign: 'center',
           cursor: browseButtonSx ? undefined : 'pointer',

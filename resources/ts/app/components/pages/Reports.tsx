@@ -41,7 +41,10 @@ import {
 } from '../bootstrap/icons';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import { fileToDataUrl } from '../../lib/applicationFiles';
 import { COMPANY, OUTLETS } from '../../lib/constants';
+import cafeLogoUrl from '../../../assets/report-logos/buenaventura-cafe.jpg';
+import mariaClaraLogoUrl from '../../../assets/report-logos/maria-clara.jpg';
 
 interface ReportData {
   [key: string]: any[];
@@ -158,6 +161,28 @@ const getPeriodRange = (period: PeriodMode, today = new Date()) => {
 
 const REPORT_SUMMARY_MODULES = ['employees', 'applications', 'schedules', 'attendance', 'attendanceLogs', 'payroll', 'evaluations', 'recognition', 'requests'];
 const REPORTS_WITHOUT_OUTLET = new Set(['criteria', 'systemLogs']);
+const REPORT_OUTLET_LOGOS = new Map([
+  ['buenaventura cafe', cafeLogoUrl],
+  ['maria clara restaurant', mariaClaraLogoUrl],
+  ['maria clara resort', mariaClaraLogoUrl],
+]);
+
+const PRINT_HEADER_STYLES = `
+  .print-header { display: flex; align-items: center; gap: 16px; background: #1f7a46; color: white; padding: 18px 22px; border-radius: 8px 8px 0 0; print-color-adjust: exact; }
+  .print-header p { color: white; margin: 0; font-size: 10px; }
+  .print-header-logo { flex: none; object-fit: contain; border-radius: 6px; }
+`;
+
+async function printReport(html: string, windowFeatures: string) {
+  const printWindow = window.open('', '_blank', windowFeatures);
+  if (!printWindow) return;
+
+  printWindow.document.write(html);
+  printWindow.document.close();
+  const logo = printWindow.document.querySelector<HTMLImageElement>('.print-header-logo');
+  if (logo) await logo.decode().catch(() => logo.remove());
+  if (!printWindow.closed) printWindow.print();
+}
 
 const reportDateColumns = new Set(['date', 'dateHired', 'dateApplied', 'createdAt', 'submittedDate', 'periodStart', 'periodEnd']);
 const currencyColumns = new Set(['salary', 'grossPay', 'deductions', 'netPay']);
@@ -203,7 +228,6 @@ const pillButtonSx = {
 
 const fieldSx = {
   '& .MuiOutlinedInput-root': {
-    borderRadius: '16px',
     bgcolor: '#ffffff',
     '& fieldset': { borderColor: GREEN_UI.border },
     '&:hover fieldset': { borderColor: GREEN_UI.borderStrong },
@@ -505,7 +529,6 @@ export default function Reports() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
@@ -842,6 +865,10 @@ export default function Reports() {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
+  const reportBrandName = selectedOutlet === 'All Outlets' ? COMPANY.name : selectedOutlet;
+  const outletKey = selectedOutlet.normalize('NFD').replace(/\p{Diacritic}/gu, '').trim().toLowerCase();
+  const reportLogoUrl = REPORT_OUTLET_LOGOS.get(outletKey);
+
   const getNarrativeSections = (type: string) => {
     if (type === 'consolidated') return consolidatedSummary;
     const rows = getFilteredRowsForType(type);
@@ -930,7 +957,6 @@ export default function Reports() {
     }
     setGeneratingPdf(true);
     setPdfError(null);
-    setPdfNotice(null);
     let uploadedPath: string | null = null;
     try {
       const { jsPDF } = await import('jspdf');
@@ -949,9 +975,23 @@ export default function Reports() {
       const outletSlug = selectedOutlet === 'All Outlets' ? 'all-outlets' : selectedOutlet.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
       const fileName = `${slug}_${outletSlug}_${dateFrom || 'all'}_to_${dateTo || 'all'}.pdf`;
       const document = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
+      const fontName = 'DejaVuSans';
+      const fontFile = `${fontName}.ttf`;
+      const [fontResponse, logoResponse] = await Promise.all([
+        fetch(`/fonts/dejavu/${fontFile}`),
+        reportLogoUrl ? fetch(reportLogoUrl) : null,
+      ]);
+      if (!fontResponse.ok) throw new Error('Could not load the report font.');
+      if (logoResponse && !logoResponse.ok) throw new Error('Could not load the outlet logo.');
+      const fontDataUrl = await fileToDataUrl(await fontResponse.blob());
+      document.addFileToVFS(fontFile, fontDataUrl.slice(fontDataUrl.indexOf(',') + 1));
+      document.addFont(fontFile, fontName, 'normal');
+      const logoImage = logoResponse ? new Uint8Array(await logoResponse.arrayBuffer()) : null;
       const pageWidth = document.internal.pageSize.getWidth();
       const pageHeight = document.internal.pageSize.getHeight();
       const margin = 48;
+      const logoSize = 54;
+      const headingX = logoImage ? margin + logoSize + 14 : margin;
       const preparedBy = preparedByName || user?.name || sessionData.session?.user.email || 'Authorized HRIS user';
       const reportSections = getNarrativeSections(reportType);
       const reportRecordCount = getNarrativeRecordCount(reportType, reportSections);
@@ -959,16 +999,17 @@ export default function Reports() {
       const header = () => {
         document.setFillColor(31, 122, 70);
         document.rect(0, 0, pageWidth, 86, 'F');
+        if (logoImage) document.addImage(logoImage, 'JPEG', margin, 16, logoSize, logoSize, 'outlet-logo');
         document.setTextColor(255, 255, 255);
         document.setFont('helvetica', 'bold');
         document.setFontSize(16);
-        document.text(COMPANY.name.toUpperCase(), margin, 26);
+        document.text(reportBrandName.toUpperCase(), headingX, 26);
         document.setFont('helvetica', 'normal');
         document.setFontSize(9);
-        document.text('HUMAN RESOURCE INFORMATION SYSTEM', margin, 42);
+        document.text('HUMAN RESOURCE INFORMATION SYSTEM', headingX, 42);
         document.setFont('helvetica', 'bold');
         document.setFontSize(12);
-        document.text(selected.label, margin, 64);
+        document.text(selected.label, headingX, 64);
         document.setFont('helvetica', 'normal');
         document.setFontSize(8);
         document.text(`Generated ${formatDisplayDateTime(generatedAt)}`, pageWidth - margin, 26, { align: 'right' });
@@ -979,7 +1020,7 @@ export default function Reports() {
           document.setFont('helvetica', 'normal');
           document.setFontSize(8);
           document.setTextColor(103, 121, 108);
-          document.text(`${COMPANY.name}  ·  Confidential HR report`, margin, pageHeight - 13);
+          document.text(COMPANY.name, margin, pageHeight - 13);
       };
       let cursorY = 116;
       const bodyWidth = pageWidth - margin * 2;
@@ -1001,19 +1042,26 @@ export default function Reports() {
       };
       const drawParagraph = (text: string) => {
         if (!text) return;
-        document.setTextColor(38, 54, 43);
-        document.setFont('helvetica', 'normal');
-        document.setFontSize(10);
-        const lines = document.splitTextToSize(text, bodyWidth) as string[];
+        const fontSize = 10;
         const lineHeight = 15;
+        const setParagraphStyle = () => {
+          document.setTextColor(38, 54, 43);
+          document.setFont(fontName, 'normal');
+          document.setFontSize(fontSize);
+        };
+        setParagraphStyle();
+        const lines = document.splitTextToSize(text, bodyWidth) as string[];
         let offset = 0;
         while (offset < lines.length) {
           const availableLines = Math.max(1, Math.floor((pageHeight - 58 - cursorY) / lineHeight));
           const currentLines = lines.slice(offset, offset + availableLines);
-          document.text(currentLines, margin, cursorY);
+          document.text(currentLines, margin, cursorY, { lineHeightFactor: lineHeight / fontSize });
           cursorY += currentLines.length * lineHeight + 10;
           offset += currentLines.length;
-          if (offset < lines.length) drawPage();
+          if (offset < lines.length) {
+            drawPage();
+            setParagraphStyle();
+          }
         }
       };
 
@@ -1085,7 +1133,6 @@ export default function Reports() {
 
       document.save(fileName);
       setReportHistory(current => [savedReport as GeneratedReport, ...current].slice(0, 10));
-      setPdfNotice('PDF downloaded and saved to report history.');
     } catch (cause) {
       if (uploadedPath) await supabase.storage.from('hr-report-pdfs').remove([uploadedPath]).catch(() => {});
       setPdfError(cause instanceof Error ? cause.message : 'Could not generate the PDF report.');
@@ -1114,19 +1161,19 @@ export default function Reports() {
     }
   };
 
+  const getPrintLogo = () => reportLogoUrl
+    ? `<img class="print-header-logo" src="${escapeHtml(new URL(reportLogoUrl, window.location.href).href)}" width="72" height="72" alt="">`
+    : '';
+
   const handlePrint = () => {
     const generatedAt = formatDisplayDateTime(new Date());
-    const win = window.open('', '_blank', 'width=900,height=700');
-    if (!win) return;
-
-    win.document.write(`
+    void printReport(`
       <html><head><title>${selected.label} Report</title>
       <style>
         @media print { @page { size: A4 portrait; margin: 16mm; } body { padding: 0; } }
         body { font-family: Arial, sans-serif; padding: 28px; font-size: 12px; line-height: 1.65; color: #26362b; }
-        .header { background: #1f7a46; color: white; padding: 18px 22px; border-radius: 8px 8px 0 0; }
-        .header h1 { font-size: 19px; margin: 0 0 4px; }
-        .header p { color: white; margin: 0; font-size: 10px; }
+        ${PRINT_HEADER_STYLES}
+        .print-header h1 { font-size: 19px; margin: 0 0 4px; }
         .content { border: 1px solid #dce8dd; border-top: 0; padding: 20px 22px; }
         h2 { color: #1f7a46; font-size: 14px; margin: 20px 0 7px; }
         h2:first-child { margin-top: 0; }
@@ -1135,13 +1182,10 @@ export default function Reports() {
         .prepared { border-top: 1px solid #dce8dd; margin-top: 24px; padding-top: 12px; display: flex; justify-content: space-between; gap: 20px; }
         .footer { color: #718176; font-size: 10px; margin-top: 22px; border-top: 1px solid #dce8dd; padding-top: 8px; }
       </style></head><body>
-      <div class="header"><h1>${escapeHtml(COMPANY.name)}</h1><p>Human Resource Information System · ${escapeHtml(selected.label)}</p></div>
-      <div class="content">${renderNarrativeHtml(reportType)}<div class="footer">Generated: ${escapeHtml(generatedAt)} · Confidential HR report</div></div>
+      <div class="print-header">${getPrintLogo()}<div><h1>${escapeHtml(reportBrandName)}</h1><p>Human Resource Information System · ${escapeHtml(selected.label)}</p></div></div>
+      <div class="content">${renderNarrativeHtml(reportType)}<div class="footer">Generated: ${escapeHtml(generatedAt)}</div></div>
       </body></html>
-    `);
-
-    win.document.close();
-    win.print();
+    `, 'width=900,height=700');
   };
 
   const handlePrintAllReports = () => {
@@ -1150,10 +1194,7 @@ export default function Reports() {
       return `<section class="report-section">${renderNarrativeHtml(rt.value, getNarrativeSections(rt.value))}</section>`;
     }).join('');
 
-    const win = window.open('', '_blank', 'width=1100,height=800');
-    if (!win) return;
-
-    win.document.write(`
+    void printReport(`
       <html><head><title>All HRIS Reports</title>
       <style>
         @media print {
@@ -1161,9 +1202,8 @@ export default function Reports() {
           body { padding: 0; }
         }
         body { font-family: Arial, sans-serif; padding: 28px; font-size: 12px; line-height: 1.65; color: #26362b; }
-        .cover { background: #1f7a46; color: white; padding: 18px 22px; border-radius: 8px 8px 0 0; }
-        h1 { margin: 0 0 6px; font-size: 21px; }
-        .cover p { margin: 0; color: white; font-size: 10px; }
+        ${PRINT_HEADER_STYLES}
+        .print-header h1 { margin: 0 0 6px; font-size: 21px; }
         .report-section { border: 1px solid #dce8dd; padding: 18px 22px; page-break-inside: auto; }
         .report-section + .report-section { border-top: 0; }
         h2 { color: #1f7a46; font-size: 14px; margin: 18px 0 7px; }
@@ -1173,17 +1213,17 @@ export default function Reports() {
         .prepared { border-top: 1px solid #dce8dd; margin-top: 20px; padding-top: 10px; display: flex; justify-content: space-between; gap: 20px; }
         .footer { color: #718176; font-size: 10px; margin-top: 18px; border-top: 1px solid #dce8dd; padding-top: 8px; }
       </style></head><body>
-      <div class="cover">
-        <h1>Buenaventura Estate HRIS - All Reports</h1>
-        <p>Period: ${escapeHtml(formatDisplayDate(dateFrom))} to ${escapeHtml(formatDisplayDate(dateTo))} | Generated: ${escapeHtml(generatedAt)}</p>
+      <div class="print-header">
+        ${getPrintLogo()}
+        <div>
+          <h1>${escapeHtml(reportBrandName)} HRIS - All Reports</h1>
+          <p>Period: ${escapeHtml(formatDisplayDate(dateFrom))} to ${escapeHtml(formatDisplayDate(dateTo))} | Generated: ${escapeHtml(generatedAt)}</p>
+        </div>
       </div>
       ${reportSections}
       <div class="footer">Buenaventura Estate HRIS | Generated: ${escapeHtml(generatedAt)} | Confidential</div>
       </body></html>
-    `);
-
-    win.document.close();
-    win.print();
+    `, 'width=1100,height=800');
   };
 
 
@@ -1543,7 +1583,6 @@ export default function Reports() {
           </Button>
         </Box>
         {pdfError && <Alert severity="error" sx={{ mt: 1.5 }}>{pdfError}</Alert>}
-        {pdfNotice && <Alert severity="success" sx={{ mt: 1.5 }}>{pdfNotice}</Alert>}
       </Paper>
 
       <Paper elevation={0} sx={{ ...softCardSx, mb: 2.5, overflow: 'hidden' }}>

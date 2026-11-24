@@ -148,7 +148,7 @@ function supabaseRest(string $method, string $path, array $payload = null, array
     return $response->json() ?? [];
 }
 
-function requireSupabaseAdmin(Request $request): array
+function requireSupabaseUser(Request $request): array
 {
     $authorization = (string) $request->header('Authorization');
     if (! str_starts_with($authorization, 'Bearer ')) {
@@ -170,7 +170,12 @@ function requireSupabaseAdmin(Request $request): array
         ]);
     }
 
-    $authUser = $userResponse->json();
+    return $userResponse->json() ?? [];
+}
+
+function requireSupabaseAdmin(Request $request): array
+{
+    $authUser = requireSupabaseUser($request);
     $authUserId = $authUser['id'] ?? '';
     $email = strtolower(trim((string) ($authUser['email'] ?? '')));
     if (! $authUserId || ! $email) {
@@ -523,16 +528,31 @@ function updateLinkedAccountPassword(Request $request, string $idField): JsonRes
     ])->header('Cache-Control', 'no-store');
 }
 
+function hrisEmailUrl(string $path): ?string
+{
+    $origin = parse_url(trim((string) (config('services.hris_email_origin') ?: config('app.url'))));
+    if (! in_array($origin['scheme'] ?? '', ['http', 'https'], true) || empty($origin['host'])
+        || isset($origin['user']) || isset($origin['pass'])) {
+        return null;
+    }
+
+    $port = isset($origin['port']) ? ':'.$origin['port'] : '';
+
+    return $origin['scheme'].'://'.$origin['host'].$port.$path;
+}
+
 function sendEmployeePasswordResetEmail(PendingRequest $auth, string $email, string $name, string $authUserId): bool
 {
     $apiKey = trim((string) config('services.resend.key'));
-    if ($apiKey === '') return false;
+    $redirectTo = hrisEmailUrl('/applicant');
+    if ($apiKey === '' || $redirectTo === null) return false;
 
     try {
-        $generated = sendSupabaseRequest($auth, 'POST', supabaseBaseUrl().'/auth/v1/admin/generate_link', [
+        $generated = sendSupabaseRequest($auth, 'POST', supabaseBaseUrl().'/auth/v1/admin/generate_link?'.http_build_query([
+            'redirect_to' => $redirectTo,
+        ]), [
             'type' => 'recovery',
             'email' => $email,
-            'options' => ['redirectTo' => 'https://app-dev-repository.vercel.app/applicant'],
         ]);
         $resetLink = trim((string) ($generated->json('properties.action_link') ?? $generated->json('action_link') ?? ''));
         if (! $generated->successful() || $resetLink === '') return false;
@@ -559,14 +579,15 @@ function sendEmployeePasswordResetEmail(PendingRequest $auth, string $email, str
 function sendAccountWelcomeEmail(string $name, string $email, string $password, string $authUserId): ?string
 {
     $key = trim((string) config('services.resend.key'));
-    if ($key === '') {
+    $loginUrl = hrisEmailUrl('/login');
+    if ($key === '' || $loginUrl === null) {
         return null;
     }
 
     try {
-        $values = ['name' => $name, 'email' => $email, 'password' => $password];
+        $values = ['name' => $name, 'email' => $email, 'password' => $password, 'loginUrl' => $loginUrl];
         $template = \Illuminate\Support\Facades\File::get(resource_path('views/emails/account-welcome.html'));
-        $html = preg_replace_callback('/\[\[(name|email|password)\]\]/', fn ($match) => e($values[$match[1]]), $template);
+        $html = preg_replace_callback('/\[\[(name|email|password|loginUrl)\]\]/', fn ($match) => e($values[$match[1]]), $template);
         // Sequential HRIS IDs can be reused after deletion. The Auth ID is unique to this creation.
         $response = Http::withToken($key)->withHeader('Idempotency-Key', 'account-welcome/'.$authUserId)
             ->acceptJson()->timeout(8)->post('https://api.resend.com/emails', [
@@ -574,7 +595,7 @@ function sendAccountWelcomeEmail(string $name, string $email, string $password, 
                 'to' => [$email],
                 'subject' => 'Welcome to Buenaventura Estate',
                 'html' => $html,
-                'text' => "Hi {$name},\n\nYour HRIS account is ready.\nSign-in email: {$email}\nTemporary password: {$password}\n\nSign in: https://app-dev-repository.vercel.app/login\nChange your temporary password after signing in. If you weren’t expecting this email, contact HR.",
+                'text' => "Hi {$name},\n\nYour HRIS account is ready.\nSign-in email: {$email}\nTemporary password: {$password}\n\nSign in: {$loginUrl}\nChange your temporary password after signing in. If you weren’t expecting this email, contact HR.",
             ]);
 
         $id = $response->json('id');
@@ -698,14 +719,15 @@ Route::post('/applications/hired-account', function (Request $request) {
     $needsSetup = ($user['app_metadata']['hris_hired_application'] ?? null) === $id
         && ($user['app_metadata']['hris_temporary_password'] ?? null) === true;
     $setupLink = null;
-    if ($needsSetup && trim((string) config('services.resend.key')) !== '') {
+    $redirectTo = hrisEmailUrl('/applicant');
+    if ($needsSetup && $redirectTo !== null && trim((string) config('services.resend.key')) !== '') {
         try {
             $link = sendSupabaseRequest($authApi(), 'POST', supabaseBaseUrl().'/auth/v1/admin/generate_link?'.http_build_query([
-                'redirect_to' => 'https://app-dev-repository.vercel.app/login',
+                'redirect_to' => $redirectTo,
             ]), [
                 'type' => 'recovery', 'email' => $user['email'],
             ]);
-            $setupLink = $link->successful() ? $link->json('action_link') : null;
+            $setupLink = $link->successful() ? ($link->json('action_link') ?? $link->json('properties.action_link')) : null;
         } catch (Throwable) {
             $setupLink = null;
         }
@@ -723,13 +745,13 @@ Route::post('/applications/hired-account', function (Request $request) {
 function sendHiredWelcomeEmail(string $name, string $recipient, string $email, ?string $setupLink, string $deliveryKey): bool
 {
     $key = trim((string) config('services.resend.key'));
-    if ($key === '') {
+    $destination = $setupLink ?: hrisEmailUrl('/login');
+    if ($key === '' || $destination === null) {
         return false;
     }
     try {
         $template = \Illuminate\Support\Facades\File::get(resource_path('views/emails/hired-welcome.html'));
         $instructions = $setupLink ? 'Use this expiring link to set your employee password. Contact HR if you need a new link.' : 'Use your current employee password. If you need help signing in, contact HR.';
-        $destination = $setupLink ?: 'https://app-dev-repository.vercel.app/login';
         $values = [
             'name' => e($name), 'email' => e($email),
             'destination' => e($destination), 'buttonLabel' => $setupLink ? 'Set employee password' : 'Sign in to HRIS',
@@ -756,11 +778,11 @@ function sendHiredWelcomeEmail(string $name, string $recipient, string $email, ?
 Route::post('/applications/send-applicant-id-email', function (Request $request) {
     $data = $request->validate([
         'applicant_id' => ['required', 'string', 'max:40'],
-        'email' => ['required', 'email', 'max:120'],
-        'name' => ['nullable', 'string', 'max:160'],
-        'position' => ['nullable', 'string', 'max:160'],
     ]);
-    $data['email'] = validateRecipientEmailAddress($data['email']);
+
+    if (! $request->bearerToken()) {
+        return response()->json(['sent' => false, 'message' => 'Sign in again to request your Applicant ID email.'], 401);
+    }
 
     $unavailable = fn () => response()->json([
         'sent' => false,
@@ -769,20 +791,44 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
     ], 503);
     $apiKey = trim((string) config('services.resend.key'));
     if (! $apiKey) {
-        Log::warning('Applicant ID email skipped: RESEND_API_KEY is not configured.', [
-            'applicant_id' => $data['applicant_id'],
-            'email' => $data['email'],
-        ]);
+        Log::warning('Applicant ID email skipped: RESEND_API_KEY is not configured.');
 
         return $unavailable();
+    }
+
+    try {
+        $authUser = requireSupabaseUser($request);
+    } catch (ValidationException) {
+        return response()->json(['sent' => false, 'message' => 'Sign in again to request your Applicant ID email.'], 401);
+    } catch (Throwable) {
+        return $unavailable();
+    }
+    $authUserId = $authUser['id'] ?? null;
+    $email = strtolower(trim($authUser['email'] ?? ''));
+    if (! $authUserId || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return response()->json(['sent' => false, 'message' => 'Sign in again to request your Applicant ID email.'], 401);
+    }
+    try {
+        $applications = supabaseRest('GET', '/rest/v1/applicants', null, [
+            'select' => 'email,name,position_applied',
+            'applicant_id' => 'eq.'.$data['applicant_id'],
+            'auth_user_id' => 'eq.'.$authUserId,
+            'limit' => 2,
+        ]);
+    } catch (Throwable) {
+        return $unavailable();
+    }
+    $application = count($applications) === 1 ? $applications[0] : null;
+    if (! $application || strtolower(trim($application['email'] ?? '')) !== $email) {
+        return response()->json(['sent' => false, 'message' => 'This application is unavailable for your account.'], 403);
     }
 
     $appName = config('app.name', 'Buenaventura HRIS');
     $fromAddress = config('services.resend.from_address', config('mail.from.address'));
     $fromName = config('services.resend.from_name', config('mail.from.name', $appName));
     $from = sprintf('%s <%s>', $fromName, $fromAddress);
-    $applicantName = trim($data['name'] ?? '') ?: 'Applicant';
-    $position = trim($data['position'] ?? '');
+    $applicantName = trim($application['name'] ?? '') ?: 'Applicant';
+    $position = trim($application['position_applied'] ?? '');
     $subject = "Your {$appName} Applicant ID";
     $trackingNote = 'Please keep this Applicant ID. You can use it to track your application status in the applicant portal.';
 
@@ -796,12 +842,13 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
 
     try {
         $response = Http::withToken($apiKey)
+            ->withHeader('Idempotency-Key', 'applicant-id/'.$authUserId.'/'.$data['applicant_id'])
             ->timeout(10)
             ->acceptJson()
             ->asJson()
             ->post('https://api.resend.com/emails', [
                 'from' => $from,
-                'to' => [$data['email']],
+                'to' => [$email],
                 'subject' => $subject,
                 'html' => $html,
                 'text' => "Hello {$applicantName},\n\nYour Applicant ID is {$data['applicant_id']}."
@@ -814,12 +861,10 @@ Route::post('/applications/send-applicant-id-email', function (Request $request)
     }
 
     if ($response->failed() || ! $response->json('id')) {
-        $responseBody = $response->json() ?? $response->body();
         Log::warning('Applicant ID email failed via Resend.', [
             'applicant_id' => $data['applicant_id'],
-            'email' => $data['email'],
             'status' => $response->status(),
-            'body' => $responseBody,
+            'code' => $response->json('name'),
         ]);
 
         return $unavailable();

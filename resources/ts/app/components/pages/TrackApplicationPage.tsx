@@ -111,7 +111,6 @@ const softCardSx = {
 
 const inputSx = {
   '& .MuiOutlinedInput-root': {
-    borderRadius: '16px',
     backgroundColor: 'rgba(255,255,255,0.92)',
     fontSize: 14,
     '& fieldset': {

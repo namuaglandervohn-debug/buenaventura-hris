@@ -2,18 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import { accountServiceUnavailable, createSupabaseFetch } from '../../lib/supabase-request.js';
+import { getHrisEmailUrl } from '../../lib/emails/hris-url.js';
 
 class AccountError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-const loginUrl = 'https://app-dev-repository.vercel.app/login';
-
 async function sendHiredWelcome({ env, fetcher, recipient, name, email, setupLink, deliveryKey }) {
   if (!env.RESEND_API_KEY?.trim()) return false;
   const template = await readFile(new URL('../../resources/views/emails/hired-welcome.html', import.meta.url), 'utf8');
   const escape = value => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const instructions = setupLink ? 'Use this expiring link to set your employee password. Contact HR if you need a new link.' : 'Use your current employee password. If you need help signing in, contact HR.';
-  const destination = setupLink || loginUrl;
+  const destination = setupLink || getHrisEmailUrl(env, '/login');
+  if (!destination) return false;
   const values = {
     name: escape(name),
     email: escape(email),
@@ -34,7 +34,10 @@ async function sendHiredWelcome({ env, fetcher, recipient, name, email, setupLin
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetcher('https://api.resend.com/emails', { ...request, signal: AbortSignal.timeout(4000) }).catch(() => null);
-    if (response?.ok) return Boolean((await response.json()).id);
+    if (response?.ok) {
+      const delivery = await response.json().catch(() => null);
+      return typeof delivery?.id === 'string' && Boolean(delivery.id.trim());
+    }
     if (response && response.status < 500) return false;
   }
   return false;
@@ -157,8 +160,10 @@ export function createHiredAccountHandler({ env = process.env, clientFactory = c
         if (!env.RESEND_API_KEY?.trim()) return false;
         let setupLink = '';
         if (needsSetup) {
+          const redirectTo = getHrisEmailUrl(env, '/applicant');
+          if (!redirectTo) return false;
           const link = check(await admin.auth.admin.generateLink({
-            type: 'recovery', email: authUser.email, options: { redirectTo: loginUrl },
+            type: 'recovery', email: authUser.email, options: { redirectTo },
           }));
           setupLink = link?.properties?.action_link;
           if (!setupLink) return false;

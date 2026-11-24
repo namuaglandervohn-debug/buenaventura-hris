@@ -907,12 +907,11 @@ export default function ApplyForJobPage() {
           setEmailPending(true);
           setSuccessDialog(true);
         },
-        sendConfirmation: (id) => sendApplicantConfirmation({
-          applicantId: id,
-          email: applicantEmail,
-          name: fullName,
-          position: formData.position,
-        }),
+        sendConfirmation: async (id) => {
+          const { data, error } = await supabase.auth.getSession();
+          if (error || !data.session?.access_token) throw new Error('Sign in to receive the confirmation email.');
+          await sendApplicantConfirmation(id, data.session.access_token);
+        },
       });
       setEmailNotice(confirmationNotice);
       setEmailPending(false);
@@ -1003,17 +1002,42 @@ export default function ApplyForJobPage() {
     );
   };
 
-  const fileActions = (file: File, onRemove: () => void, outlined = false) => (
-    <Stack direction="row" alignItems="center" justifyContent="flex-end" spacing={0.75} sx={{ flexShrink: 0 }}>
-      <Tooltip title="Preview">
-        <IconButton type="button" size="small" color="primary" aria-label={`Preview ${file.name}`} aria-haspopup="dialog"
-          onClick={() => setPreviewFile(file)}>
-          <Visibility fontSize="small" />
-        </IconButton>
-      </Tooltip>
-      <Button type="button" size="small" color="error" variant={outlined ? 'outlined' : 'text'} aria-label={`Remove ${file.name}`}
-        onClick={onRemove} sx={outlined ? { textTransform: 'none', fontWeight: 700 } : undefined}>Remove</Button>
-    </Stack>
+  const renderDocumentRow = (file: File, index: number, placeholder: string, onRemove: () => void, showCheckmark = true) => (
+    <Box key={`${file.name}-${file.lastModified}-${index}`} sx={{
+      display: 'grid', alignItems: 'center',
+      gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 1fr) minmax(0, 240px) auto' },
+      rowGap: { xs: 1, sm: 0.5 }, columnGap: 1,
+      p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4',
+    }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ gridColumn: { sm: '1' }, gridRow: { sm: '2' }, minWidth: 0 }}>
+        {showCheckmark && <CheckCircleOutlineRounded sx={{ color: '#15803d', fontSize: 18 }} />}
+        <Typography variant="body2" fontWeight={700} sx={{ color: showCheckmark ? '#14532d' : undefined, overflowWrap: 'anywhere' }}>
+          {file.name}
+        </Typography>
+      </Stack>
+      <TextField size="small" required label="Document title" placeholder={placeholder}
+        value={documentTitles[applicationFileTitleKey(file)] ?? ''}
+        onChange={event => {
+          setDocumentTitles(current => ({ ...current, [applicationFileTitleKey(file)]: event.target.value }));
+          setDocumentTitleError('');
+        }}
+        sx={{
+          display: { sm: 'contents' },
+          '& > label': { gridColumn: { sm: '2' }, gridRow: { sm: '1' }, marginBottom: { sm: 0 } },
+          '& > .hris-field': { gridColumn: { sm: '2' }, gridRow: { sm: '2' } },
+        }}
+      />
+      <Stack direction="row" alignItems="center" justifyContent="flex-end" spacing={0.75} sx={{ gridColumn: { sm: '3' }, gridRow: { sm: '2' } }}>
+        <Tooltip title="Preview">
+          <IconButton type="button" size="small" color="primary" aria-label={`Preview ${file.name}`} aria-haspopup="dialog"
+            onClick={() => setPreviewFile(file)}>
+            <Visibility fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Button type="button" size="small" color="error" variant={showCheckmark ? 'outlined' : 'text'} aria-label={`Remove ${file.name}`}
+          onClick={onRemove} sx={showCheckmark ? { textTransform: 'none', fontWeight: 700 } : undefined}>Remove</Button>
+      </Stack>
+    </Box>
   );
 
   if (authLoading || profileLoading) return <Box sx={{ p: 5 }}><CircularProgress /></Box>;
@@ -1030,7 +1054,7 @@ export default function ApplyForJobPage() {
             <Typography variant="body2">Choose a submission to copy its answers, declaration, and saved files. Review them before submitting.</Typography>
             {historyError && <Alert severity="error">{historyError}</Alert>}
             <TextField select fullWidth label="Previous application" value={sourceId} disabled={loadingAnswers}
-              onChange={event => setSourceId(event.target.value)}>
+              onChange={event => setSourceId(event.target.value)} sx={textFieldSx}>
               {history.map(item => (
                 <MenuItem key={item.applicant_id} value={item.applicant_id} sx={{ whiteSpace: 'normal' }}>
                   {[item.position_applied, formatDisplayDate(item.created_at), item.applicant_id].filter(Boolean).join(' · ')}
@@ -1359,12 +1383,8 @@ export default function ApplyForJobPage() {
                     </Box>
                     {certificateError && <Alert severity="error">{certificateError}</Alert>}
                     {documentTitleError && <Alert severity="error">{documentTitleError}</Alert>}
-                    {certificateFiles.map((file, index) => (
-                      <Stack key={`${file.name}-${file.lastModified}-${index}`} direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" gap={1} sx={{ p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4' }}>
-                        <Typography variant="body2" fontWeight={700} sx={{ minWidth: 0, overflowWrap: 'anywhere', flex: 1 }}>{file.name}</Typography>
-                        <TextField size="small" required label="Document title" placeholder="e.g. Food Safety Training" value={documentTitles[applicationFileTitleKey(file)] ?? ''} onChange={event => { setDocumentTitles(current => ({ ...current, [applicationFileTitleKey(file)]: event.target.value })); setDocumentTitleError(''); }} sx={{ minWidth: { sm: 240 } }} />
-                        {fileActions(file, () => setCertificateFiles(current => current.filter((_, fileIndex) => fileIndex !== index)))}
-                      </Stack>
+                    {certificateFiles.map((file, index) => renderDocumentRow(file, index, 'e.g. Food Safety Training',
+                      () => setCertificateFiles(current => current.filter((_, fileIndex) => fileIndex !== index)), false,
                     ))}
                   </Stack>
                 </Paper>
@@ -1451,18 +1471,16 @@ export default function ApplyForJobPage() {
                               <Typography variant="body2" color="text.secondary">Upload one or more files. Accepted: {ACCEPTED_APPLICATION_FILE_LABEL}.</Typography>
                             </Box>
                           </Stack>
-                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...softButtonSx, minHeight: 48, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)' }}>
+                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...applicationPrimaryButtonSx, minHeight: 48 }}>
                             <input hidden multiple type="file" accept={ACCEPTED_APPLICATION_FILE_TYPES} onChange={(e) => { const files = Array.from(e.target.files ?? []); setResumeFiles((current) => [...current, ...files]); clearFieldError('resumeFiles'); e.target.value = ''; }} />
                             {resumeFiles.length ? 'Add Resume Files' : 'Select Resume Files'}
                           </Button>
                           {resumeFiles.length ? (
                             <Stack spacing={1}>
                               {documentTitleError && <Alert severity="error">{documentTitleError}</Alert>}
-                              {resumeFiles.map((file, fileIndex) => <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4' }}>
-                                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}><CheckCircleOutlineRounded sx={{ color: '#15803d', fontSize: 18 }} /><Typography variant="body2" fontWeight={700} sx={{ color: '#14532d', overflowWrap: 'anywhere' }}>{file.name}</Typography></Stack>
-                                <TextField size="small" required label="Document title" placeholder="e.g. Resume / Biodata" value={documentTitles[applicationFileTitleKey(file)] ?? ''} onChange={event => { setDocumentTitles(current => ({ ...current, [applicationFileTitleKey(file)]: event.target.value })); setDocumentTitleError(''); }} sx={{ minWidth: { sm: 240 } }} />
-                                {fileActions(file, () => setResumeFiles(current => current.filter((_, index) => index !== fileIndex)), true)}
-                              </Stack>)}
+                              {resumeFiles.map((file, index) => renderDocumentRow(file, index, 'e.g. Resume / Biodata',
+                                () => setResumeFiles(current => current.filter((_, fileIndex) => fileIndex !== index)),
+                              ))}
                             </Stack>
                           ) : (
                             <Typography variant="caption" color="text.secondary">Required before submitting the application.</Typography>
@@ -1481,19 +1499,15 @@ export default function ApplyForJobPage() {
                               <Typography variant="body2" color="text.secondary">Upload at least one file. Examples: valid ID, certificates, or records.</Typography>
                             </Box>
                           </Stack>
-                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...softButtonSx, minHeight: 48, background: 'linear-gradient(135deg, #166534 0%, #22c55e 100%)' }}>
+                          <Button fullWidth component="label" variant="contained" startIcon={<UploadFile />} sx={{ ...applicationPrimaryButtonSx, minHeight: 48 }}>
                             <input hidden multiple type="file" accept={ACCEPTED_APPLICATION_FILE_TYPES} onChange={(e) => { const selectedFiles = Array.from(e.target.files ?? []); setSupportingFiles((prev) => [...prev, ...selectedFiles]); clearFieldError('supportingFiles'); e.target.value = ''; }} />
                             {supportingFiles.length > 0 ? `Add Documents (${supportingFiles.length} selected)` : 'Select Documents'}
                           </Button>
                           {supportingFiles.length > 0 ? (
                             <Stack spacing={1}>
                               {documentTitleError && <Alert severity="error">{documentTitleError}</Alert>}
-                              {supportingFiles.map((file, fileIndex) => (
-                                <Stack key={`${file.name}-${file.lastModified}-${fileIndex}`} direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ p: 1.25, borderRadius: '14px', border: '1px solid #bbf7d0', bgcolor: '#f0fdf4' }}>
-                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}><CheckCircleOutlineRounded sx={{ color: '#15803d', fontSize: 18 }} /><Typography variant="body2" fontWeight={700} sx={{ color: '#14532d', overflowWrap: 'anywhere' }}>{file.name}</Typography></Stack>
-                                  <TextField size="small" required label="Document title" placeholder="e.g. Birth Certificate" value={documentTitles[applicationFileTitleKey(file)] ?? ''} onChange={event => { setDocumentTitles(current => ({ ...current, [applicationFileTitleKey(file)]: event.target.value })); setDocumentTitleError(''); }} sx={{ minWidth: { sm: 240 } }} />
-                                  {fileActions(file, () => setSupportingFiles(prev => prev.filter((_, currentIndex) => currentIndex !== fileIndex)), true)}
-                                </Stack>
+                              {supportingFiles.map((file, index) => renderDocumentRow(file, index, 'e.g. Birth Certificate',
+                                () => setSupportingFiles(current => current.filter((_, fileIndex) => fileIndex !== index)),
                               ))}
                             </Stack>
                           ) : (
@@ -1522,7 +1536,7 @@ export default function ApplyForJobPage() {
       {previewFile && <ApplicationFilePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
       <Dialog open={successDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: '26px', border: '1px solid rgba(22,101,52,0.12)', boxShadow: '0 28px 80px rgba(15,23,42,0.18)' } }}>
         <DialogContent sx={{ textAlign: 'center', p: { xs: 2.5, sm: 4 } }}><Box sx={{ width: { xs: 68, sm: 78 }, height: { xs: 68, sm: 78 }, borderRadius: '22px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', mb: 2, background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', color: '#166534', boxShadow: '0 16px 34px rgba(22,101,52,0.18)' }}><VerifiedUserOutlined sx={{ fontSize: { xs: 42, sm: 50 } }} /></Box><Typography variant="h5" fontWeight={700} gutterBottom>Application Submitted Successfully</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Please save your Applicant ID. You will use this to track your application status.</Typography><Paper elevation={0} sx={{ p: 2, borderRadius: 1.5, bgcolor: 'rgba(31,122,71,0.08)', border: '1px solid rgba(31,122,71,0.18)', mb: 2 }}><Typography variant="h6" fontWeight={700} color="primary" sx={{ overflowWrap: 'anywhere' }}>{applicantId}</Typography></Paper>{emailPending && <Alert severity="info" sx={{ mb: 2 }}>Your application is saved. Sending your confirmation email…</Alert>}{!emailPending && !emailNotice && <Alert severity="success" sx={{ mb: 2 }}>A copy of your Applicant ID was sent to your email address.</Alert>}{emailNotice && <Alert severity="warning" sx={{ mb: 2, textAlign: 'left' }}>{emailNotice}</Alert>}{copied && <Alert severity="success" sx={{ mb: 2 }}>Applicant ID copied!</Alert>}{copyFailed && <Alert severity="error" sx={{ mb: 2 }}>Unable to copy Applicant ID.</Alert>}</DialogContent>
-        <DialogActions sx={{ p: { xs: 2, sm: 3 }, justifyContent: 'center', gap: 1, flexWrap: 'wrap' }}><Button variant="outlined" startIcon={<ContentCopy />} onClick={handleCopyId} sx={{ ...softButtonSx, borderColor: '#166534', color: '#166534', background: '#ffffff', width: { xs: '100%', sm: 'auto' } }}>Copy Applicant ID</Button><Button variant="contained" onClick={() => navigate('/track')} sx={{ ...softButtonSx, background: 'linear-gradient(135deg, #1F7A47 0%, #3FA46A 100%)', width: { xs: '100%', sm: 'auto' } }}>Track Application</Button><Button onClick={handleCloseDialog} sx={{ ...softButtonSx, width: { xs: '100%', sm: 'auto' } }}>Close</Button></DialogActions>
+        <DialogActions sx={{ p: { xs: 2, sm: 3 }, justifyContent: 'center', gap: 1, flexWrap: 'wrap' }}><Button variant="outlined" startIcon={<ContentCopy />} onClick={handleCopyId} sx={{ ...softButtonSx, borderColor: '#166534', color: '#166534', background: '#ffffff', width: { xs: '100%', sm: 'auto' } }}>Copy Applicant ID</Button><Button variant="contained" onClick={() => navigate('/track')} sx={{ ...applicationPrimaryButtonSx, width: { xs: '100%', sm: 'auto' } }}>Track Application</Button><Button onClick={handleCloseDialog} sx={{ ...softButtonSx, width: { xs: '100%', sm: 'auto' } }}>Close</Button></DialogActions>
       </Dialog>
     </AuthBackground>
   );

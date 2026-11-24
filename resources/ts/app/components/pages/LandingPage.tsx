@@ -40,6 +40,7 @@ import {
 } from "../bootstrap/icons";
 import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../../context/AuthContext";
+import { getJobApplicationEntryPath } from "../../lib/applicationNavigation";
 import ActionSnackbar from "../ActionSnackbar";
 import BrandLogo from "../BrandLogo";
 
@@ -284,8 +285,7 @@ export default function LandingPage() {
   };
 
   const handleApplyForPosition = (job: JobPosting) => {
-    const selectedPosition = encodeURIComponent(job.title.trim());
-    navigate(`/apply?position=${selectedPosition}`);
+    navigate(getJobApplicationEntryPath(job.title, user?.role));
   };
 
   const handleSignIn = () => {
@@ -717,7 +717,6 @@ export default function LandingPage() {
             }}
             sx={{
               "& .MuiOutlinedInput-root": {
-                borderRadius: 1.5,
                 bgcolor: "#f8fbf8",
                 fontWeight: 700,
               },

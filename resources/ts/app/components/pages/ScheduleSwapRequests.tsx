@@ -76,7 +76,7 @@ const statusColor = (status: SwapRequest['status']) => status === 'Approved' ? '
     : status === 'Pending HR' ? 'info' : 'warning';
 
 const cardSx = { borderRadius: 3, border: '1px solid rgba(76, 150, 89, 0.2)', bgcolor: '#fff', boxShadow: '0 10px 30px rgba(44, 91, 51, 0.06)' } as const;
-const fieldSx = { '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: '#fbfff9' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(76, 150, 89, 0.32)' } } as const;
+const fieldSx = { '& .MuiOutlinedInput-root': { bgcolor: '#fbfff9' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(76, 150, 89, 0.32)' } } as const;
 
 export default function ScheduleSwapRequests({ embedded = false, openRequestDialog = false, onRequestDialogOpened, onScheduleChanged }: ScheduleSwapRequestsProps) {
   const { user } = useAuth();

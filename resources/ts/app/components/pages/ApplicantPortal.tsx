@@ -247,7 +247,7 @@ export default function ApplicantPortal() {
       } else if (registering) {
         validateProfile();
         const registrationEmail = email.trim().toLowerCase();
-        const result = await supabase.auth.signUp({ email: registrationEmail, password, options: { emailRedirectTo: applicantConfirmationRedirect(window.location.origin), data: { registration_kind: 'applicant', applicant_profile: completeApplicantAddress(profile) } } });
+        const result = await supabase.auth.signUp({ email: registrationEmail, password, options: { emailRedirectTo: applicantConfirmationRedirect(window.location.origin, hasApplicationDestination ? next : null), data: { registration_kind: 'applicant', applicant_profile: completeApplicantAddress(profile) } } });
         if (result.error && !['user_already_exists', 'email_exists'].includes(result.error.code ?? '')) throw result.error;
         if (result.data.session) {
           navigate(loginPath, { replace: true, state: { registrationEmail } });
@@ -405,7 +405,7 @@ export default function ApplicantPortal() {
                           <>
                             <Typography component="label" variant="body2">
                               Supporting documents (up to 5 files, 10 MB total; add a title for each)
-                              <Box component="input" type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" disabled={busy}
+                              <Box component="input" type="file" className="form-control" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" disabled={busy}
                                 onChange={event => {
                                   const selected = Array.from(event.currentTarget.files ?? []);
                                   setRequirementFiles(current => [...current, ...selected.filter(file => !current.some(existing => requirementFileKey(existing) === requirementFileKey(file)))]);
@@ -484,7 +484,7 @@ export default function ApplicantPortal() {
       onClose={continueToSignIn}>
       <DialogTitle id="applicant-activation-title">Check your email</DialogTitle>
       <DialogContent>
-        <Typography>Registration submitted. Check your inbox or spam folder for the link to activate your applicant account.</Typography>
+        <Typography>If confirmation is still pending, check your inbox or spam folder for the activation link. If you already confirmed this address, sign in with the password you originally set or use Forgot password.</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{registrationReceipt}</Typography>
       </DialogContent>
       <DialogActions>

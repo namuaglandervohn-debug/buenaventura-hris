@@ -18,6 +18,8 @@ class UserAccountsTest extends TestCase
             'services.supabase.url' => 'https://supabase.test',
             'services.supabase.anon_key' => 'test-anon',
             'services.supabase.service_role_key' => 'test-service',
+            'services.resend.key' => 'test-resend',
+            'services.hris_email_origin' => 'https://hris.example.test',
         ]);
         Http::preventStrayRequests();
         Http::fake(function (Request $request) {
@@ -32,6 +34,8 @@ class UserAccountsTest extends TestCase
                     'auth_user_id' => 'employee-auth', 'email' => 'employee@example.test', 'role' => 'employee', 'is_active' => true,
                 ]]),
                 $path === '/auth/v1/admin/users/employee-auth' => Http::response(['id' => 'employee-auth', 'email' => 'employee@example.test']),
+                $path === '/auth/v1/admin/generate_link' => Http::response(['action_link' => 'https://supabase.test/verify?type=recovery']),
+                $path === '/emails' => Http::response(['id' => 'password-email']),
             };
         });
 
@@ -39,12 +43,20 @@ class UserAccountsTest extends TestCase
             'action' => 'update_employee_password',
             'employee_id' => 'EMP001',
             'password' => 'Example-New123',
-        ])->assertOk()->assertExactJson(['message' => 'Employee password updated.']);
+        ])->assertOk()->assertJsonPath('password_updated', true)->assertJsonPath('password_email_sent', true);
 
         Http::assertSent(fn (Request $request) => $request->method() === 'PUT'
             && $request->url() === 'https://supabase.test/auth/v1/admin/users/employee-auth'
             && $request['password'] === 'Example-New123'
             && $request['app_metadata']['hris_temporary_password'] === false);
+        Http::assertSent(function (Request $request) {
+            parse_str(parse_url($request->url(), PHP_URL_QUERY) ?? '', $query);
+
+            return parse_url($request->url(), PHP_URL_PATH) === '/auth/v1/admin/generate_link'
+                && ($query['redirect_to'] ?? null) === 'https://hris.example.test/applicant';
+        });
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.resend.com/emails'
+            && str_contains($request['html'], 'https://supabase.test/verify?type=recovery'));
 
         $this->withToken('test-token')->postJson('/api/admin/user-accounts', [
             'action' => 'update_account_password',

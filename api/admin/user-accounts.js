@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { accountServiceUnavailable, createSupabaseFetch } from '../../lib/supabase-request.js';
+import { getHrisEmailUrl } from '../../lib/emails/hris-url.js';
 
 const roles = new Map([
   ['hr', 'hr_admin'],
@@ -75,13 +76,14 @@ async function approveAlreadyLinkedEmployeeRequest(admin, requestId, reviewerId,
 
 async function sendWelcomeEmail({ env, fetcher, name, email, password, authUserId }) {
   const key = clean(env.RESEND_API_KEY);
-  if (!key) return null;
+  const loginUrl = getHrisEmailUrl(env, '/login');
+  if (!key || !loginUrl) return null;
 
   const template = await readFile(new URL('../../resources/views/emails/account-welcome.html', import.meta.url), 'utf8');
-  const values = { name, email, password };
+  const values = { name, email, password, loginUrl };
   const escapeHtml = (value) => value.replace(/[&<>"']/g, char =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-  const html = template.replace(/\[\[(name|email|password)\]\]/g, (_, field) => escapeHtml(values[field]));
+  const html = template.replace(/\[\[(name|email|password|loginUrl)\]\]/g, (_, field) => escapeHtml(values[field]));
   const response = await fetcher('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -95,7 +97,7 @@ async function sendWelcomeEmail({ env, fetcher, name, email, password, authUserI
       to: [email],
       subject: 'Welcome to Buenaventura Estate',
       html,
-      text: `Hi ${name},\n\nYour HRIS account is ready.\nSign-in email: ${email}\nTemporary password: ${password}\n\nSign in: https://app-dev-repository.vercel.app/login\nChange your temporary password after signing in. If you weren’t expecting this email, contact HR.`,
+      text: `Hi ${name},\n\nYour HRIS account is ready.\nSign-in email: ${email}\nTemporary password: ${password}\n\nSign in: ${loginUrl}\nChange your temporary password after signing in. If you weren’t expecting this email, contact HR.`,
     }),
   });
   if (!response.ok) return null;
@@ -163,12 +165,13 @@ async function updateAccountPassword(admin, body, send, env, fetcher) {
 
 async function sendPasswordResetEmail({ admin, env, fetcher, email, name, authUserId }) {
   const apiKey = clean(env.RESEND_API_KEY);
-  if (!apiKey) return false;
+  const redirectTo = getHrisEmailUrl(env, '/applicant');
+  if (!apiKey || !redirectTo) return false;
 
   const generated = await admin.auth.admin.generateLink({
     type: 'recovery',
     email,
-    options: { redirectTo: 'https://app-dev-repository.vercel.app/applicant' },
+    options: { redirectTo },
   });
   if (generated.error) throw generated.error;
   const resetLink = clean(generated.data?.properties?.action_link ?? generated.data?.action_link);

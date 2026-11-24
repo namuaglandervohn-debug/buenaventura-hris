@@ -919,7 +919,7 @@ export default function MyProfile() {
               sx={{
                 border: '2px dashed',
                 borderColor: GREEN_UI.borderStrong,
-                borderRadius: '20px',
+                borderRadius: 'var(--hris-field-radius)',
                 p: { xs: 2, sm: 2.5 },
                 textAlign: 'center',
                 cursor: 'pointer',

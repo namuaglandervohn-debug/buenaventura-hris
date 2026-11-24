@@ -25,7 +25,7 @@ function fixture() {
         async generateLink({ type, email, options }) {
           assert.equal(type, 'recovery');
           assert.ok(state.authUsers.some(user => user.email === email));
-          assert.match(options.redirectTo, /\/login$/);
+          assert.equal(options.redirectTo, 'https://hris.example.test/applicant');
           return ok({ properties: { action_link: 'https://example.invalid/verify?token=fixture&type=recovery' } });
         },
         async createUser(payload) {
@@ -72,7 +72,7 @@ function fixture() {
       };
     },
   };
-  const env = { SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'server-secret', RESEND_API_KEY: 'test-mail' };
+  const env = { APP_URL: 'https://hris.example.test', SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'server-secret', RESEND_API_KEY: 'test-mail' };
   const handler = createHiredAccountHandler({ env, clientFactory: () => client, fetcher: async (_url, request) => {
     state.mail.push({ ...JSON.parse(request.body), key: request.headers['Idempotency-Key'] });
     return Response.json({ id: 'test-mail' }, { status: state.mailStatus });

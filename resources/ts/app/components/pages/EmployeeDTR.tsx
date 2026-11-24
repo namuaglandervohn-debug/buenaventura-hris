@@ -703,7 +703,6 @@ export default function EmployeeDTR() {
                   sx={{
                     minWidth: { xs: "100%", sm: 320 },
                     "& .MuiOutlinedInput-root": {
-                      borderRadius: "12px",
                       bgcolor: "#fff",
                       "& fieldset": { borderColor: GREEN_UI.border },
                       "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
@@ -721,7 +720,6 @@ export default function EmployeeDTR() {
                 sx={{
                   minWidth: 185,
                   "& .MuiOutlinedInput-root": {
-                    borderRadius: "12px",
                     bgcolor: "#fff",
                     "& fieldset": { borderColor: GREEN_UI.border },
                     "&:hover fieldset": { borderColor: GREEN_UI.borderStrong },
@@ -855,7 +853,6 @@ export default function EmployeeDTR() {
                   sx={{
                     maxWidth: { xs: "100%", sm: 320 },
                     "& .MuiOutlinedInput-root": {
-                      borderRadius: "8px",
                       bgcolor: "#fff",
                       "& fieldset": { borderColor: "rgba(31, 122, 70, 0.24)" },
                     },

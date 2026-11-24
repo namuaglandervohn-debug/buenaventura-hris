@@ -9,8 +9,7 @@
 
 ## Employee account API deployment
 
-This checkout targets **APP_DEV_DATABASE** (`taxxflvboflolnnptwkp`) and the Vercel project **app-dev-repository** in `namuaglandervohn-9523s-projects`.
-Set `VITE_SUPABASE_URL=https://taxxflvboflolnnptwkp.supabase.co` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or `VITE_SUPABASE_ANON_KEY`) to this project's public key in Vercel. The frontend also contains public defaults for this project. Set server-only `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the same project; credentials from the previous project will not work.
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or `VITE_SUPABASE_ANON_KEY`) for each deployed environment. Set server-only `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for that same project. Applicant verification and passwords belong to the Supabase project where the account was created.
 The schema and access rules used to initialize the new project are recorded in `database/app_dev_schema.sql` and `database/app_dev_rules.sql`. These files contain no HR records or login credentials and are intended for initializing an empty database, not reapplying to the populated project.
 
 Vercel serves `api/applications/hired-account.js`; local Laravel serves the same URL through `routes/api.php`. Deploy the API functions together with the frontend, rather than uploading only `dist/`.
@@ -19,7 +18,9 @@ Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the server hosting environ
 
 Run account and session regression checks with `node --test tests/*.test.mjs`.
 
-Applicant confirmation emails require a valid `RESEND_API_KEY` and a verified `RESEND_FROM_ADDRESS` in the server hosting environment. A send-only Resend key is sufficient; a denied domains-list request with `restricted_api_key` does not mean the email key is invalid. After changing Laravel environment variables, refresh cached configuration with `php artisan config:clear`; on Vercel, update the environment and redeploy. Email failures preserve saved applications and show the tracking ID with a delivery notice. Never put an email-provider key in a `VITE_` variable.
+Supabase Auth sends registration confirmation and self-service password reset emails. In each Supabase project, configure the matching Site URL and allow the HRIS origin's `/applicant` and `/login?employeeRegistration=1` callback URLs, including the configured local origin for local testing. Applicant callbacks may carry a `next` query parameter for the selected job. See [Supabase redirect URL configuration](https://supabase.com/docs/guides/auth/redirect-urls).
+
+Application ID, status, and employee account emails use the server's `RESEND_API_KEY` and verified `RESEND_FROM_ADDRESS`. Configure `HRIS_EMAIL_ORIGIN` to select the public site used in staff-generated email links, or use the Vercel deployment URL or Laravel `APP_URL`. The origin must use the same Supabase project as the sending server. Email failures preserve saved applications and their tracking IDs.
 
 Applicant IDs use `APP-YYYY-0001` numbering, continuing after the highest numeric ID for the current year. Gaps from deleted records and previously issued random IDs do not change the next number. Concurrent submissions rely on the database unique constraint and retry with the latest number; existing tracking IDs are preserved.
 

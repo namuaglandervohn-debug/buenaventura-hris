@@ -143,9 +143,10 @@ export default function RootLayout({ children, applicant }: {
     logout();
     navigate('/login');
   };
+  const closeMobileNavigation = () => setMobileOpen(false);
   const handleNavigate = (path: string) => {
     if (!applicant || location.pathname !== path) navigate(path);
-    if (!isDesktop) setMobileOpen(false);
+    if (!isDesktop) closeMobileNavigation();
   };
 
   const unreadCount = notifications.filter(n => !readIds.has(n.id)).length;
@@ -177,21 +178,35 @@ export default function RootLayout({ children, applicant }: {
     gm: 'General Manager', accounting: 'Accounting & Finance', applicant: 'Applicant',
   };
 
-  const drawerContent = (
+  const renderDrawerContent = (showCloseButton: boolean) => (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', background: accountColors.sidebar, color: accountColors.onGreen }}>
-      <ListItemButton
-        component="button"
-        onClick={() => handleNavigate(applicant ? '/applicant' : '/dashboard')}
-        sx={{ m: 1.5, px: 1, py: 1.25, gap: 1, borderRadius: 2, flexGrow: 0, textAlign: 'left' }}
-      >
-        <Box sx={{ width: 44, height: 44, flexShrink: 0, borderRadius: '14px', bgcolor: 'background.paper' }}>
-          <BrandLogo size="100%" />
-        </Box>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography fontWeight={800} noWrap>Buenaventura</Typography>
-          <Typography variant="caption" color={accountColors.onGreenMuted}>HRIS</Typography>
-        </Box>
-      </ListItemButton>
+      <Box sx={{ display: 'flex', alignItems: 'center', m: 1.5 }}>
+        <ListItemButton
+          onClick={() => handleNavigate(applicant ? '/applicant' : '/dashboard')}
+          sx={{ flex: 1, minWidth: 0, pl: 1, pr: { xs: 0, md: 1 }, py: 1.25, gap: 1, borderRadius: 2 }}
+        >
+          <Box sx={{ width: 44, height: 44, flexShrink: 0, borderRadius: '14px', bgcolor: 'background.paper' }}>
+            <BrandLogo size="100%" />
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography fontWeight={800} noWrap>Buenaventura</Typography>
+            <Typography variant="caption" color={accountColors.onGreenMuted}>HRIS</Typography>
+          </Box>
+        </ListItemButton>
+        {showCloseButton && (
+          <IconButton
+            aria-label="Close navigation"
+            onClick={closeMobileNavigation}
+            sx={{
+              width: 44, height: 44, flexShrink: 0, color: 'inherit',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+              '&:focus-visible': { outline: '2px solid currentColor', outlineOffset: -2 },
+            }}
+          >
+            <MenuIcon />
+          </IconButton>
+        )}
+      </Box>
 
       <Divider sx={{ mx: 2, borderColor: accountColors.onGreenBorder }} />
 
@@ -433,19 +448,19 @@ export default function RootLayout({ children, applicant }: {
           },
         }}
       >
-        {drawerContent}
+        {renderDrawerContent(false)}
       </Drawer>
       <Drawer
         variant="temporary"
         open={mobileOpen}
-        onClose={() => setMobileOpen(false)}
+        onClose={closeMobileNavigation}
         ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', md: 'none' },
           '& .MuiDrawer-paper': { width: drawerWidth, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', backgroundImage: 'none' },
         }}
       >
-        {drawerContent}
+        {renderDrawerContent(true)}
       </Drawer>
 
       <Box component="main" sx={{ flex: 1, minWidth: 0, minHeight: '100vh', pt: `${toolbarHeight}px`, background: accountColors.dashboard }}>

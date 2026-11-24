@@ -13,7 +13,6 @@ import { OUTLETS } from '../../lib/constants';
 type Row = Record<string, any>;
 type AnalyticsData = {
   employees: Row[];
-  attendance: Row[];
   evaluations: Row[];
   requests: Row[];
   applicants: Row[];
@@ -25,15 +24,15 @@ const GREEN = '#197a49';
 const MUTED = '#718176';
 const BORDER = '#e3eee4';
 const COLORS = ['#197a49', '#37a66b', '#e3ad45', '#c95c54', '#5b8cbd', '#83c996'];
+const REPORTING_YEARS = [2026, 2025, 2024];
 const OUTLET_COLORS = new Map([
   ['maria clara resort', '#3b82c4'],
   ['maria clara restaurant', '#37a66b'],
   ['buenaventura café', '#e3ad45'],
 ]);
-const EMPTY: AnalyticsData = { employees: [], attendance: [], evaluations: [], requests: [], applicants: [], userAccounts: [], demoRecords: [] };
+const EMPTY: AnalyticsData = { employees: [], evaluations: [], requests: [], applicants: [], userAccounts: [], demoRecords: [] };
 const normalized = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
 const outletColor = (name: string) => OUTLET_COLORS.get(normalized(name)) ?? MUTED;
-const truthy = (value: unknown) => value === true || ['true', 'yes', '1'].includes(normalized(value));
 const number = (value: unknown) => {
   const parsed = Number(String(value ?? 0).replace(/[,%₱]/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -63,17 +62,18 @@ const recruitmentStatus = (row: Row) => {
   return 'Pending review';
 };
 
-function ChartCard({ title, children, height = 270 }: { title: string; children: ReactNode; height?: number }) {
+function ChartCard({ title, subtitle, children, height = 270 }: { title: string; subtitle?: string; children: ReactNode; height?: number }) {
   return (
     <Paper elevation={0} sx={{ height: '100%', p: { xs: 1.75, sm: 2.25 }, borderRadius: '22px', border: `1px solid ${BORDER}`, bgcolor: 'rgba(255,255,255,.94)', boxShadow: '0 12px 30px rgba(43,91,55,.07)' }}>
       <Typography variant="subtitle1" fontWeight={750} sx={{ color: '#1e2d24' }}>{title}</Typography>
+      {subtitle && <Typography variant="body2" color="text.secondary">{subtitle}</Typography>}
       <Box sx={{ width: '100%', height, mt: 1.5, position: 'relative' }}>{children}</Box>
     </Paper>
   );
 }
 
-function EmptyChart({ show }: { show: boolean }) {
-  return show ? <Box sx={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', color: MUTED, fontSize: '.9rem', pointerEvents: 'none' }}>No records for this selection</Box> : null;
+function EmptyChart({ show, message = 'No records for this selection' }: { show: boolean; message?: string }) {
+  return show ? <Box sx={{ position: 'absolute', inset: 0, zIndex: 1, display: 'grid', placeItems: 'center', color: MUTED, fontSize: '.9rem', pointerEvents: 'none' }}>{message}</Box> : null;
 }
 
 function MetricCard({ label, value, color = GREEN }: { label: string; value: string; color?: string }) {
@@ -87,33 +87,91 @@ function MetricCard({ label, value, color = GREEN }: { label: string; value: str
   );
 }
 
-type AttendanceMonthTrend = { month: string; present: number; late: number; absent: number };
+type AttendanceTotal = { month_number: number; present: number; late: number; absent: number; includes_demo: boolean };
 
 export default function HRAnalytics() {
   const monthOptions = useMemo(getMonthOptions, []);
-  const currentYear = new Date().getFullYear();
-  const [reportingYear, setReportingYear] = useState(currentYear);
-  const [reportingMonth, setReportingMonth] = useState(new Date().getMonth() + 1);
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const [reportingYear, setReportingYear] = useState(
+    REPORTING_YEARS.find(year => year <= currentYear) ?? REPORTING_YEARS[REPORTING_YEARS.length - 1],
+  );
+  const [reportingMonth, setReportingMonth] = useState(today.getMonth() + 1);
   const month = `${reportingYear}-${String(reportingMonth).padStart(2, '0')}`;
   const [outlet, setOutlet] = useState('All Outlets');
   const [data, setData] = useState<AnalyticsData>(EMPTY);
+  const [loadedMonth, setLoadedMonth] = useState('');
   const [loading, setLoading] = useState(true);
+  const [monthlyRefresh, setMonthlyRefresh] = useState(0);
+  const [attendanceRefresh, setAttendanceRefresh] = useState(0);
+  const [attendance, setAttendance] = useState<{ scope: string; rows: AttendanceTotal[]; failed?: boolean }>();
+  const attendanceScope = `${reportingYear}:${outlet}`;
+  const visibleMonth = loadedMonth || month;
 
   useEffect(() => {
-    let active = true;
-    const loadDemoRows = async () => {
+    let monthlyTimer: number | undefined;
+    let attendanceTimer: number | undefined;
+    const refreshMonthly = () => {
+      window.clearTimeout(monthlyTimer);
+      monthlyTimer = window.setTimeout(() => setMonthlyRefresh(value => value + 1), 200);
+    };
+    const refreshAttendance = () => {
+      window.clearTimeout(attendanceTimer);
+      attendanceTimer = window.setTimeout(() => setAttendanceRefresh(value => value + 1), 200);
+    };
+    const refreshBoth = () => { refreshMonthly(); refreshAttendance(); };
+    const channel = supabase.channel('hr-analytics-live-data');
+    ['employee_evaluations', 'employee_requests', 'applicants'].forEach(table => {
+      channel.on('postgres_changes', { event: '*', schema: 'public', table }, refreshMonthly);
+    });
+    ['employees', 'user_accounts', 'hr_analytics_demo_records'].forEach(table => {
+      channel.on('postgres_changes', { event: '*', schema: 'public', table }, refreshBoth);
+    });
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_logs' }, refreshAttendance);
+    channel.subscribe();
+    window.addEventListener('focus', refreshBoth);
+    return () => {
+      window.clearTimeout(monthlyTimer);
+      window.clearTimeout(attendanceTimer);
+      window.removeEventListener('focus', refreshBoth);
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const { data: rows, error } = await supabase.rpc('hris_analytics_monthly_attendance', {
+          report_year: reportingYear,
+          report_outlet: outlet === 'All Outlets' ? null : outlet,
+        }).abortSignal(controller.signal);
+        if (error) throw error;
+        if (!controller.signal.aborted) setAttendance({ scope: attendanceScope, rows: rows ?? [] });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn('Attendance analytics could not load:', error);
+        setAttendance(previous => ({
+          scope: attendanceScope,
+          rows: previous?.scope === attendanceScope ? previous.rows : [],
+          failed: true,
+        }));
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [reportingYear, outlet, attendanceScope, attendanceRefresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const dateFrom = `${reportingYear}-01-01`;
+    const lastDay = new Date(reportingYear, reportingMonth, 0).getDate();
+    const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+    const loadRows = async (page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>) => {
       const rows: Row[] = [];
       const pageSize = 1000;
-      const dateFrom = `${reportingYear}-01-01`;
-      const lastDay = new Date(reportingYear, reportingMonth, 0).getDate();
-      const dateTo = `${reportingYear}-${String(reportingMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       for (let from = 0; ; from += pageSize) {
-        const result = await supabase.from('hr_analytics_demo_records')
-          .select('seed_key,record_type,employee_id,outlet,record_date,status,score,is_late,is_absent,late_minutes,request_type')
-          .gte('record_date', dateFrom)
-          .lte('record_date', dateTo)
-          .order('seed_key')
-          .range(from, from + pageSize - 1);
+        const result = await page(from, from + pageSize - 1);
         if (result.error) throw result.error;
         rows.push(...(result.data ?? []));
         if ((result.data ?? []).length < pageSize) break;
@@ -123,44 +181,41 @@ export default function HRAnalytics() {
     const load = async () => {
       setLoading(true);
       const sources: Array<[keyof AnalyticsData, PromiseLike<any>]> = [
-        ['employees', supabase.from('employees').select('employee_id,first_name,middle_name,last_name,suffix,outlet,status,department,position,hire_date')],
-        ['attendance', supabase.from('attendance_logs').select('employee_id,attendance_date,is_absent,is_late,late_minutes')],
-        ['evaluations', supabase.from('employee_evaluations').select('employee_id,employee_name,outlet,evaluation_period_end,final_weighted_score,status')],
-        ['requests', supabase.from('employee_requests').select('employee_id,request_type,status,created_at,start_date')],
-        ['applicants', supabase.from('applicants').select('applicant_id,status,hiring_decision,created_at')],
-        ['userAccounts', supabase.from('user_accounts').select('employee_id,applicant_id,outlet')],
-        ['demoRecords', loadDemoRows()],
+        ['employees', supabase.from('employees').select('employee_id,first_name,middle_name,last_name,suffix,outlet,status,department,position,hire_date').abortSignal(controller.signal)],
+        ['evaluations', supabase.from('employee_evaluations').select('employee_id,employee_name,outlet,evaluation_period_end,final_weighted_score,status').abortSignal(controller.signal)],
+        ['requests', supabase.from('employee_requests').select('employee_id,request_type,status,created_at,start_date').abortSignal(controller.signal)],
+        ['applicants', supabase.from('applicants').select('applicant_id,status,hiring_decision,created_at').abortSignal(controller.signal)],
+        ['userAccounts', supabase.from('user_accounts').select('employee_id,applicant_id,outlet').abortSignal(controller.signal)],
+        ['demoRecords', loadRows((from, to) => supabase.from('hr_analytics_demo_records')
+          .select('seed_key,record_type,employee_id,outlet,record_date,status,score,request_type')
+          .gte('record_date', dateFrom)
+          .lte('record_date', monthEnd)
+          .neq('record_type', 'attendance')
+          .or(`record_type.eq.employee_outlet,record_date.gte.${month}-01`)
+          .order('seed_key')
+          .range(from, to)
+          .abortSignal(controller.signal))],
       ];
       const results = await Promise.allSettled(sources.map(([, query]) => query));
-      if (!active) return;
+      if (controller.signal.aborted) return;
       const next: AnalyticsData = { ...EMPTY };
       const failures: string[] = [];
       results.forEach((result, index) => {
         const key = sources[index][0];
         if (result.status === 'rejected' || result.value.error) {
-          failures.push({ employees: 'Employees', attendance: 'Attendance', evaluations: 'Performance', requests: 'Requests', applicants: 'Recruitment', userAccounts: 'Outlet assignments', demoRecords: 'Analytics demo data' }[key]);
+          failures.push({ employees: 'Employees', evaluations: 'Performance', requests: 'Requests', applicants: 'Recruitment', userAccounts: 'Outlet assignments', demoRecords: 'Analytics demo data' }[key]);
           return;
         }
         next[key] = result.value.data ?? [];
       });
       setData(next);
+      setLoadedMonth(month);
       if (failures.length) console.warn('Some HR analytics sources could not load:', failures);
       setLoading(false);
     };
     void load();
-    const channel = supabase.channel('hr-analytics-live-data');
-    ['employees', 'attendance_logs', 'employee_evaluations', 'employee_requests', 'applicants', 'user_accounts', 'hr_analytics_demo_records'].forEach(table => {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => { void load(); });
-    });
-    channel.subscribe();
-    const refresh = () => { void load(); };
-    window.addEventListener('focus', refresh);
-    return () => {
-      active = false;
-      window.removeEventListener('focus', refresh);
-      void supabase.removeChannel(channel);
-    };
-  }, [reportingYear, reportingMonth]);
+    return () => controller.abort();
+  }, [month, reportingYear, reportingMonth, monthlyRefresh]);
 
   const employeeOutlets = useMemo(() => {
     const map = new Map(data.employees.map(row => [String(row.employee_id ?? ''), String(row.outlet ?? 'Unassigned')]));
@@ -177,10 +232,6 @@ export default function HRAnalytics() {
   }, [employeeOutlets, data.demoRecords]);
   const applicantOutlets = useMemo(() => new Map(data.userAccounts.filter(row => row.applicant_id && row.outlet).map(row => [String(row.applicant_id), String(row.outlet)])), [data.userAccounts]);
   const inOutlet = (row: Row) => outlet === 'All Outlets' || outletOf(row, employeeOutlets).toLowerCase() === outlet.toLowerCase();
-  const demoAttendance = data.demoRecords.filter(row => row.record_type === 'attendance').map(row => ({
-    employee_id: row.employee_id, outlet: row.outlet, attendance_date: row.record_date,
-    is_late: row.is_late, is_absent: row.is_absent, late_minutes: row.late_minutes,
-  }));
   const demoEvaluations = data.demoRecords.filter(row => row.record_type === 'performance').map(row => ({
     employee_id: row.employee_id, outlet: row.outlet, evaluation_period_end: row.record_date,
     final_weighted_score: row.score, status: row.status,
@@ -192,31 +243,17 @@ export default function HRAnalytics() {
   const demoApplicants = data.demoRecords.filter(row => row.record_type === 'recruitment').map(row => ({
     applicant_id: row.seed_key, outlet: row.outlet, status: row.status, created_at: row.record_date,
   }));
-  const monthEvaluations = [...data.evaluations, ...demoEvaluations].filter(row => sameMonth(row.evaluation_period_end, month) && validEvaluation(row) && inOutlet(row));
-  const monthRequests = [...data.requests, ...demoRequests].filter(row => sameMonth(row.created_at || row.start_date, month) && normalized(row.request_type).includes('leave') && inOutlet(row));
-  const monthApplicants = [...data.applicants, ...demoApplicants].filter(row => sameMonth(row.created_at, month) && (outlet === 'All Outlets' || String(row.outlet || applicantOutlets.get(String(row.applicant_id ?? '')) || '').toLowerCase() === outlet.toLowerCase()));
-  const attendanceByMonth = useMemo((): AttendanceMonthTrend[] => {
-    const [year, reportingMonthNumber] = month.split('-').map(Number);
-    const months = Array.from({ length: 12 }, (_, index) => ({
-      month: new Intl.DateTimeFormat('en', { month: 'long' }).format(new Date(year, index, 1)),
-      present: 0,
-      late: 0,
-      absent: 0,
-    }));
-    [...data.attendance, ...demoAttendance].forEach(row => {
-      if (!inOutlet(row)) return;
-      const date = dateOnly(row.attendance_date);
-      if (Number(date.slice(0, 4)) !== year) return;
-      const monthIndex = Number(date.slice(5, 7)) - 1;
-      if (monthIndex >= reportingMonthNumber) return;
-      const current = months[monthIndex];
-      if (!current) return;
-      if (truthy(row.is_absent)) current.absent += 1;
-      else if (truthy(row.is_late) || number(row.late_minutes) > 0) current.late += 1;
-      else current.present += 1;
-    });
-    return months;
-  }, [month, data.attendance, demoAttendance, outlet, employeeOutlets]);
+  const monthEvaluations = [...data.evaluations, ...demoEvaluations].filter(row => sameMonth(row.evaluation_period_end, visibleMonth) && validEvaluation(row) && inOutlet(row));
+  const monthRequests = [...data.requests, ...demoRequests].filter(row => sameMonth(row.created_at || row.start_date, visibleMonth) && normalized(row.request_type).includes('leave') && inOutlet(row));
+  const monthApplicants = [...data.applicants, ...demoApplicants].filter(row => sameMonth(row.created_at, visibleMonth) && (outlet === 'All Outlets' || String(row.outlet || applicantOutlets.get(String(row.applicant_id ?? '')) || '').toLowerCase() === outlet.toLowerCase()));
+  const attendanceResult = attendance?.scope === attendanceScope ? attendance : undefined;
+  const attendanceByMonth = (attendanceResult?.rows ?? monthOptions.map(({ value }) => ({ month_number: value })))
+    .map(row => ({ ...row, month: monthOptions[row.month_number - 1]?.label }));
+  const hasAttendance = attendanceResult?.rows.some(row => row.present + row.late + row.absent > 0);
+  const attendanceSubtitle = [
+    attendanceResult?.rows.some(row => row.includes_demo) && 'Includes demo attendance',
+    attendanceResult?.failed && hasAttendance && 'Showing the last loaded totals',
+  ].filter(Boolean).join(' · ');
 
   const employeeNames = useMemo(() => new Map(data.employees.map(row => [
     String(row.employee_id),
@@ -277,14 +314,14 @@ export default function HRAnalytics() {
     data.employees.filter(row => {
       const hireDate = dateOnly(row.hire_date);
       return hireDate !== ''
-        && sameMonth(hireDate, month)
+        && sameMonth(hireDate, visibleMonth)
         && (outlet === 'All Outlets' || outletOf(row, analyticsEmployeeOutlets).toLowerCase() === outlet.toLowerCase());
     }).forEach(row => {
       const name = outletOf(row, analyticsEmployeeOutlets);
       counts.set(name, (counts.get(name) ?? 0) + 1);
     });
     demoApplicants.filter(row =>
-      sameMonth(row.created_at, month)
+      sameMonth(row.created_at, visibleMonth)
       && recruitmentStatus(row) === 'Hired'
       && (outlet === 'All Outlets' || String(row.outlet ?? '').toLowerCase() === outlet.toLowerCase())
     ).forEach(row => {
@@ -292,12 +329,11 @@ export default function HRAnalytics() {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     });
     return Array.from(counts, ([name, employees]) => ({ name, employees })).sort((a, b) => b.employees - a.employees);
-  }, [data.employees, demoApplicants, analyticsEmployeeOutlets, outlet, month]);
+  }, [data.employees, demoApplicants, analyticsEmployeeOutlets, outlet, visibleMonth]);
 
   const averagePerformance = monthEvaluations.length ? monthEvaluations.reduce((sum, row) => sum + number(row.final_weighted_score), 0) / monthEvaluations.length : null;
   const tooltip = { contentStyle: { borderRadius: 12, borderColor: BORDER }, labelStyle: { color: '#1e2d24', fontWeight: 700 } };
-  const monthLabel = `${monthOptions.find(option => option.value === reportingMonth)?.label ?? ''} ${reportingYear}`.trim();
-  const yearOptions = Array.from({ length: currentYear - 1990 + 1 }, (_, index) => currentYear - index);
+  const monthLabel = `${monthOptions[Number(visibleMonth.slice(5)) - 1]?.label ?? ''} ${visibleMonth.slice(0, 4)}`.trim();
 
   return (
     <Box sx={{ mt: 2.5, mb: 2.5 }}>
@@ -323,7 +359,7 @@ export default function HRAnalytics() {
           <FormControl size="small" sx={{ minWidth: 115, bgcolor: 'white' }}>
             <InputLabel id="analytics-year-label">Year</InputLabel>
             <Select labelId="analytics-year-label" value={reportingYear} label="Year" onChange={event => setReportingYear(Number(event.target.value))}>
-              {yearOptions.map(year => <MenuItem key={year} value={year}>{year}</MenuItem>)}
+              {REPORTING_YEARS.map(year => <MenuItem key={year} value={year}>{year}</MenuItem>)}
             </Select>
           </FormControl>
         </Stack>
@@ -332,20 +368,20 @@ export default function HRAnalytics() {
       {loading && <Alert severity="info" icon={<CircularProgress size={16} />} sx={{ mb: 1.5, borderRadius: '14px' }}>Loading HR analytics…</Alert>}
 
       <Grid container spacing={1.5} sx={{ mb: 2 }}>
-        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Employees" value={loading ? '…' : data.employees.filter(row => outlet === 'All Outlets' || outletOf(row, analyticsEmployeeOutlets).toLowerCase() === outlet.toLowerCase()).length.toLocaleString()} /></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Average performance" value={loading ? '…' : averagePerformance === null ? '—' : `${averagePerformance.toFixed(1)}%`} color="#5b8cbd" /></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Applicants this month" value={loading ? '…' : monthApplicants.length.toLocaleString()} color="#bd8120" /></Grid>
-        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Leave requests this month" value={loading ? '…' : monthRequests.length.toLocaleString()} color="#8b5ad8" /></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Employees" value={!loadedMonth ? '…' : data.employees.filter(row => outlet === 'All Outlets' || outletOf(row, analyticsEmployeeOutlets).toLowerCase() === outlet.toLowerCase()).length.toLocaleString()} /></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Average performance" value={!loadedMonth ? '…' : averagePerformance === null ? '—' : `${averagePerformance.toFixed(1)}%`} color="#5b8cbd" /></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Applicants this month" value={!loadedMonth ? '…' : monthApplicants.length.toLocaleString()} color="#bd8120" /></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><MetricCard label="Leave requests this month" value={!loadedMonth ? '…' : monthRequests.length.toLocaleString()} color="#8b5ad8" /></Grid>
       </Grid>
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
-          <ChartCard title="Attendance Trends by Month">
-            {!loading && <EmptyChart show={!attendanceByMonth.some(item => item.present + item.late + item.absent > 0)} />}
+          <ChartCard title={`Attendance Trends by Month (${reportingYear})`} subtitle={attendanceSubtitle}>
+            <EmptyChart show={!hasAttendance} message={attendanceResult?.failed ? 'Attendance could not load' : attendanceResult ? undefined : 'Loading attendance…'} />
             <ResponsiveContainer width="100%" height="100%"><LineChart data={attendanceByMonth} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={BORDER} />
-              <XAxis dataKey="month" tick={{ fill: MUTED, fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={false} axisLine={false} tickLine={false} />
+              <XAxis dataKey="month" interval={0} tickFormatter={label => label.slice(0, 3)} tick={{ fill: MUTED, fontSize: 11 }} />
+              <YAxis width={0} allowDecimals={false} tick={false} axisLine={false} tickLine={false} />
               <Tooltip {...tooltip} />
               <Legend />
               <Line type="monotone" dataKey="present" name="On time" stroke="#37a66b" strokeWidth={2.5} dot={false} />
