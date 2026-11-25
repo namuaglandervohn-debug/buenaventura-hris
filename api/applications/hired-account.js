@@ -8,12 +8,12 @@ class AccountError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 async function sendHiredWelcome({ env, fetcher, recipient, name, email, setupLink, deliveryKey }) {
-  if (!env.RESEND_API_KEY?.trim()) return false;
+  if (!env.RESEND_API_KEY?.trim()) return { sent: false, code: 'EMAIL_SERVICE_NOT_CONFIGURED' };
   const template = await readFile(new URL('../../resources/views/emails/hired-welcome.html', import.meta.url), 'utf8');
   const escape = value => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const instructions = setupLink ? 'Use this expiring link to set your employee password. Contact HR if you need a new link.' : 'Use your current employee password. If you need help signing in, contact HR.';
   const destination = setupLink || getHrisEmailUrl(env, '/login');
-  if (!destination) return false;
+  if (!destination) return { sent: false, code: 'EMAIL_LINK_NOT_CONFIGURED' };
   const values = {
     name: escape(name),
     email: escape(email),
@@ -36,11 +36,16 @@ async function sendHiredWelcome({ env, fetcher, recipient, name, email, setupLin
     const response = await fetcher('https://api.resend.com/emails', { ...request, signal: AbortSignal.timeout(4000) }).catch(() => null);
     if (response?.ok) {
       const delivery = await response.json().catch(() => null);
-      return typeof delivery?.id === 'string' && Boolean(delivery.id.trim());
+      return typeof delivery?.id === 'string' && Boolean(delivery.id.trim())
+        ? { sent: true, code: null }
+        : { sent: false, code: 'EMAIL_PROVIDER_REJECTED' };
     }
-    if (response && response.status < 500) return false;
+    if (response && (response.status === 401 || response.status === 403)) {
+      return { sent: false, code: 'EMAIL_PROVIDER_AUTH_FAILED' };
+    }
+    if (response && response.status < 500) return { sent: false, code: 'EMAIL_PROVIDER_REJECTED' };
   }
-  return false;
+  return { sent: false, code: 'EMAIL_PROVIDER_UNAVAILABLE' };
 }
 
 const check = (result) => { if (result.error) throw result.error; return result.data; };
@@ -156,26 +161,39 @@ export function createHiredAccountHandler({ env = process.env, clientFactory = c
         } else saved = result.data;
       }
       const needsSetup = authUser.app_metadata?.hris_hired_application === applicantId && authUser.app_metadata?.hris_temporary_password === true;
-      const sent = await (async () => {
-        if (!env.RESEND_API_KEY?.trim()) return false;
+      const delivery = await (async () => {
+        if (!env.RESEND_API_KEY?.trim()) return { sent: false, code: 'EMAIL_SERVICE_NOT_CONFIGURED' };
         let setupLink = '';
         if (needsSetup) {
           const redirectTo = getHrisEmailUrl(env, '/applicant');
-          if (!redirectTo) return false;
+          if (!redirectTo) return { sent: false, code: 'EMAIL_LINK_NOT_CONFIGURED' };
           const link = check(await admin.auth.admin.generateLink({
             type: 'recovery', email: authUser.email, options: { redirectTo },
           }));
           setupLink = link?.properties?.action_link;
-          if (!setupLink) return false;
+          if (!setupLink) return { sent: false, code: 'EMAIL_LINK_NOT_CONFIGURED' };
         }
         const deliveryKey = 'hired-welcome/' + applicantId + '/' + randomUUID();
         return sendHiredWelcome({ env, fetcher, recipient, name, email: authUser.email, setupLink, deliveryKey });
-      })().catch(() => false);
+      })().catch(() => ({ sent: false, code: 'EMAIL_PROVIDER_UNAVAILABLE' }));
+      const sent = delivery.sent;
       if (sent) check(await admin.from('applicants').update({ employee_setup_email_sent_at: new Date().toISOString() })
         .eq('applicant_id', applicantId).select('applicant_id').single());
-      return send(200, { user: saved, welcome_email_sent: sent, message: sent
-        ? 'Employee account ready. The welcome email was accepted for delivery.'
-        : 'Employee account ready. The welcome email could not be sent. Use Resend Setup Email to retry.' });
+      const emailFailureMessages = {
+        EMAIL_SERVICE_NOT_CONFIGURED: 'Email delivery is not configured. Ask the system administrator to set RESEND_API_KEY in Vercel.',
+        EMAIL_PROVIDER_AUTH_FAILED: 'The email provider rejected its API credential. Ask the system administrator to replace RESEND_API_KEY in Vercel.',
+        EMAIL_PROVIDER_REJECTED: 'The email provider did not accept this message. Check the sender address and Resend domain configuration.',
+        EMAIL_PROVIDER_UNAVAILABLE: 'The email provider could not be reached. Try again later.',
+        EMAIL_LINK_NOT_CONFIGURED: 'The password setup link could not be created. Ask the system administrator to check the deployment URL and Supabase email settings.',
+      };
+      return send(200, {
+        user: saved,
+        welcome_email_sent: sent,
+        email_error_code: delivery.code,
+        message: sent
+          ? 'Employee account ready. The welcome email was accepted for delivery.'
+          : `Employee account ready. The setup email was not sent. ${emailFailureMessages[delivery.code] || 'Ask the system administrator to check email configuration.'} After the issue is fixed, select Resend Setup Email to retry.`,
+      });
     } catch (error) {
       if (error instanceof AccountError) return send(error.status, { message: error.message });
       return send(503, { message: accountServiceUnavailable });
