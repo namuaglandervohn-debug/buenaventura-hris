@@ -3,7 +3,7 @@ import MobileNumberField from '../MobileNumberField';
 import { formatMobileNumber, isPhilippineMobileNumber } from '../../lib/mobileNumber';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
-import { Alert, Box, Button, CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment, MenuItem, Paper, Stack, Tooltip, Typography } from '../bootstrap';
+import { Alert, Box, Button, CircularProgress, Chip, Container, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, IconButton, InputAdornment, MenuItem, Paper, Stack, Tooltip, Typography } from '../bootstrap';
 import { AccountCircle, ArrowBackRounded, Assignment, BadgeOutlined, CakeOutlined, Close, DeleteOutline, EditNote, EmailOutlined, FileDownload, FavoriteBorder, HomeOutlined, LockOutlined, LocationCityOutlined, MapOutlined, PersonOutline, PhoneOutlined, PlaceOutlined, Public, Save, TrackChanges, Visibility, VisibilityOff, WcOutlined } from '../bootstrap/icons';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
@@ -12,7 +12,7 @@ import AuthBackground from '../AuthBackground';
 import RootLayout from '../layouts/RootLayout';
 import { ApplicationTracker } from './TrackApplicationPage';
 import { fileToDataUrl } from '../../lib/applicationFiles';
-import { recruitmentStatusLabel } from '../../lib/recruitmentStatus';
+import { recruitmentStatusLabel, recruitmentStatusPalette } from '../../lib/recruitmentStatus';
 import { accountColors } from '../layouts/accountColors';
 import { profileCardSx, profileDetailsSx, profileFieldSx, profileHeroSx, profileIconSx } from '../layouts/profileStyles';
 import ProfilePhotoUpload from '../ProfilePhotoUpload';
@@ -387,9 +387,15 @@ export default function ApplicantPortal() {
                     <Typography variant="body2" color="text.secondary">No applications submitted yet.</Typography>
                   </Paper>
                 )}
-                {profileReady && applications.map(app => (
-                  <Paper key={app.applicant_id} elevation={0} sx={{ ...profileDetailsSx, p: 1.5, mt: 1.25 }}>
-                    <Typography fontWeight={700}>{app.position_applied} - {app.is_archived ? 'Archived' : recruitmentStatusLabel(app.status)}</Typography>
+                {profileReady && applications.map(app => {
+                  const status = app.is_archived ? 'Archived' : app.status;
+                  const statusPalette = recruitmentStatusPalette(status);
+                  return <Paper key={app.applicant_id} elevation={0} sx={{ ...profileDetailsSx, p: 1.5, mt: 1.25 }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
+                      <Typography fontWeight={700}>{app.position_applied}</Typography>
+                      <Chip label={recruitmentStatusLabel(status)} size="small" variant="outlined"
+                        sx={{ bgcolor: statusPalette.bg, color: statusPalette.color, borderColor: statusPalette.border, fontWeight: 650 }} />
+                    </Stack>
                     <Typography variant="body2" color="text.secondary">
                       {[app.applicant_id, formatDisplayDate(app.created_at)].filter(Boolean).join(' · ')}
                     </Typography>
@@ -437,8 +443,8 @@ export default function ApplicantPortal() {
                         )}
                       </Stack>
                     )}
-                  </Paper>
-                ))}
+                  </Paper>;
+                })}
               </Paper>
             </Grid>
           </Grid>

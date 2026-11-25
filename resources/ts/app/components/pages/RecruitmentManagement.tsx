@@ -9,7 +9,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { loadApplicationFiles } from '../../lib/applicationFiles';
 import { apiErrorMessage, readableErrorMessage } from '../../lib/apiError';
 import { sendApplicationStatusEmail } from '../../lib/sendApplicationStatusEmail';
-import { recruitmentStatusLabel } from '../../lib/recruitmentStatus';
+import { recruitmentStatusLabel, recruitmentStatusPalette } from '../../lib/recruitmentStatus';
 import {
   Sync,
   CalendarMonth,
@@ -85,6 +85,7 @@ type AppStatus =
   | 'Hired'
   | 'Not Qualified'
   | 'Not Hired'
+  | 'Withdrawn'
   | 'Archived';
 
 interface Application {
@@ -157,17 +158,6 @@ interface Application {
   raw?: any;
 }
 
-const STATUS_COLORS: Record<AppStatus, 'default' | 'primary' | 'warning' | 'info' | 'success' | 'error'> = {
-  Submitted: 'default',
-  'Under Review': 'primary',
-  'Missing Requirements': 'warning',
-  'For Interview': 'info',
-  Hired: 'success',
-  'Not Qualified': 'error',
-  'Not Hired': 'error',
-  Archived: 'default',
-};
-
 function requirementsComplete(app: Pick<Application, 'hasResume' | 'hasBirthCert' | 'hasTOR' | 'hasMedCert' | 'customRequirements'>) {
   return Boolean(app.hasResume && app.hasBirthCert && app.hasTOR && app.hasMedCert
     && (app.customRequirements ?? []).every(requirement => requirement.checked));
@@ -238,18 +228,7 @@ const chipIconSx = {
 };
 
 const statusChipSx = (status: AppStatus) => {
-  const styles: Record<AppStatus, { bg: string; color: string; border: string }> = {
-    Submitted: { bg: '#f4f7f3', color: '#5f6e63', border: '#dce8da' },
-    'Under Review': { bg: '#eaf6ff', color: '#24658f', border: '#b9ddf4' },
-    'Missing Requirements': { bg: '#fff7e0', color: '#9b6b00', border: '#f5d786' },
-    'For Interview': { bg: '#e9f6ff', color: '#1d6f9c', border: '#b7dff7' },
-    Hired: { bg: '#e5f8e9', color: '#217a43', border: '#a9dfb6' },
-    'Not Qualified': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
-    'Not Hired': { bg: '#fdeaea', color: '#9c2f2f', border: '#efb8b8' },
-    Archived: { bg: '#f4f1e8', color: '#7a5b1f', border: '#dfcfa9' },
-  };
-
-  const selected = styles[status] ?? styles.Submitted;
+  const selected = recruitmentStatusPalette(status);
 
   return {
     bgcolor: selected.bg,

@@ -65,7 +65,11 @@ export async function handleStatusEmail(request, response, { env = process.env, 
     return sendJson(response, 422, { sent: false, message: 'A valid applicant ID, email address and application status are required.' });
   }
   const apiKey = String(env.RESEND_API_KEY ?? '').trim();
-  if (!apiKey) return sendJson(response, 503, { sent: false, message: 'Status email is not configured on this server. Set RESEND_API_KEY and redeploy.' });
+  if (!apiKey) return sendJson(response, 503, {
+    sent: false,
+    code: 'EMAIL_SERVICE_NOT_CONFIGURED',
+    message: 'Email delivery is not configured. Ask the system administrator to set RESEND_API_KEY for this deployment.',
+  });
   let permission;
   try {
     permission = await authorize(request, data, env);
@@ -112,9 +116,19 @@ export async function handleStatusEmail(request, response, { env = process.env, 
     });
     const provider = await result.json().catch(() => null);
     if (!result.ok || !provider?.id) {
-      const detail = typeof provider?.message === 'string' ? provider.message : typeof provider?.error?.message === 'string' ? provider.error.message : 'The email provider did not accept the status email.';
       console.warn('Status email failed:', { status: result.status, code: provider?.name });
-      return sendJson(response, 502, { sent: false, message: detail, resend_status: result.status });
+      if (result.status === 401 || result.status === 403) {
+        return sendJson(response, 502, {
+          sent: false,
+          code: 'EMAIL_PROVIDER_AUTH_FAILED',
+          message: 'The email provider rejected its API credential. Ask the system administrator to replace RESEND_API_KEY in Vercel, then retry the notification.',
+        });
+      }
+      return sendJson(response, 502, {
+        sent: false,
+        code: 'EMAIL_PROVIDER_REJECTED',
+        message: 'The email provider did not accept this notification. Your saved application changes are unchanged; try the notification again later.',
+      });
     }
     return sendJson(response, 200, { sent: true, message: 'Application status email sent.' });
   } catch {
