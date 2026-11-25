@@ -427,32 +427,36 @@ export default function EmployeeProfile() {
 
         const parsedApplication = parseApplicationDetails(applicantData?.cover_letter);
 
-        applicationForm = applicantData ? {
+        const storedProfileForm = data.profile_details?.applicationForm && typeof data.profile_details.applicationForm === 'object'
+          ? data.profile_details.applicationForm : {};
+
+        applicationForm = applicantData || Object.keys(storedProfileForm).length ? {
           ...parsedApplication,
-          applicantId: applicantData.applicant_id ?? data.applicant_id,
-          status: applicantData.status ?? "",
-          positionApplied: applicantData.position_applied ?? parsedApplication.positionApplied ?? "",
-          name: applicantData.name ?? "",
-          firstName: applicantData.first_name ?? "",
-          middleName: applicantData.middle_name ?? "",
-          lastName: applicantData.last_name ?? "",
-          suffix: applicantData.suffix ?? "",
-          gender: applicantData.gender ?? "",
-          civilStatus: applicantData.civil_status ?? "",
-          birthdate: applicantData.birthdate ?? "",
-          birthplace: applicantData.birthplace ?? "",
-          height: applicantData.height ?? "",
-          weight: applicantData.weight ?? "",
-          email: applicantData.email ?? "",
-          phone: applicantData.phone_number ?? "",
-          tin: applicantData.tin ?? "",
-          sss: applicantData.sss ?? "",
-          philhealth: applicantData.philhealth ?? "",
-          pagibig: applicantData.pagibig ?? "",
-          age: parsedApplication.age ?? "",
-          nationality: parsedApplication.nationality ?? "",
-          currentAddress: parsedApplication.currentAddress ?? applicantData.address ?? "",
-          submittedAt: applicantData.created_at ?? "",
+          ...storedProfileForm,
+          applicantId: applicantData?.applicant_id ?? data.applicant_id,
+          status: applicantData?.status ?? "",
+          positionApplied: applicantData?.position_applied ?? parsedApplication.positionApplied ?? "",
+          name: `${data.first_name ?? applicantData?.first_name ?? ""} ${data.middle_name ?? applicantData?.middle_name ?? ""} ${data.last_name ?? applicantData?.last_name ?? ""} ${data.suffix ?? applicantData?.suffix ?? ""}`.replace(/\s+/g, " ").trim(),
+          firstName: data.first_name ?? applicantData?.first_name ?? storedProfileForm.firstName ?? "",
+          middleName: data.middle_name ?? applicantData?.middle_name ?? storedProfileForm.middleName ?? "",
+          lastName: data.last_name ?? applicantData?.last_name ?? storedProfileForm.lastName ?? "",
+          suffix: data.suffix ?? applicantData?.suffix ?? storedProfileForm.suffix ?? "",
+          gender: data.gender ?? applicantData?.gender ?? storedProfileForm.gender ?? "",
+          civilStatus: data.civil_status ?? applicantData?.civil_status ?? storedProfileForm.civilStatus ?? "",
+          birthdate: data.birthdate ?? applicantData?.birthdate ?? storedProfileForm.birthdate ?? "",
+          birthplace: data.birthplace ?? applicantData?.birthplace ?? storedProfileForm.birthplace ?? "",
+          height: storedProfileForm.height ?? parsedApplication.height ?? "",
+          weight: storedProfileForm.weight ?? parsedApplication.weight ?? "",
+          email: data.email ?? applicantData?.email ?? "",
+          phone: data.phone_number ?? applicantData?.phone_number ?? "",
+          tin: data.tin ?? applicantData?.tin ?? storedProfileForm.tin ?? "",
+          sss: data.sss ?? applicantData?.sss ?? storedProfileForm.sss ?? "",
+          philhealth: data.philhealth ?? applicantData?.philhealth ?? storedProfileForm.philhealth ?? "",
+          pagibig: data.pagibig ?? applicantData?.pagibig ?? storedProfileForm.pagibig ?? "",
+          age: storedProfileForm.age ?? parsedApplication.age ?? "",
+          nationality: storedProfileForm.nationality ?? parsedApplication.nationality ?? "",
+          currentAddress: storedProfileForm.currentAddress ?? parsedApplication.currentAddress ?? applicantData?.address ?? data.address ?? "",
+          submittedAt: applicantData?.created_at ?? "",
         } : null;
 
         const resumeDoc =
@@ -542,12 +546,6 @@ export default function EmployeeProfile() {
     setSnackbar({ open: true, message: 'Only the employee can edit their own profile.', severity: 'error' });
     return;
   }
-    const nextOverride = salaryDraft === null ? editSavedSalary : Number(salaryDraft);
-    if (salaryDraft && (!Number.isFinite(nextOverride) || nextOverride <= 0)) {
-      setEditProfileTab('Account');
-      setSnackbar({ open: true, message: 'Enter a daily salary greater than zero, or clear the field to use the job posting rate.', severity: 'error' });
-      return;
-    }
     const original = employee?.applicationForm;
     const updated = editForm.applicationForm;
     const changedNumbers = [
@@ -564,7 +562,14 @@ export default function EmployeeProfile() {
 
   try {
     const documentsChanged = editForm.employeeDocumentsOnly !== employee?.employeeDocumentsOnly;
-
+    const applicationForm = editForm.applicationForm ?? {};
+    const employeeProfileForm = { ...applicationForm };
+    delete employeeProfileForm.applicantId;
+    delete employeeProfileForm.status;
+    delete employeeProfileForm.positionApplied;
+    delete employeeProfileForm.submittedAt;
+    delete employeeProfileForm.submittedDocuments;
+    delete employeeProfileForm.documentTitles;
     const employeeUpdate: Record<string, any> = {
       first_name: editForm.first_name ?? "",
       middle_name: editForm.middle_name ?? "",
@@ -573,33 +578,20 @@ export default function EmployeeProfile() {
       email: editForm.email,
       phone_number: editForm.contact,
       address: editForm.address,
-      department: editForm.department,
-      position: editForm.position,
-      status: editForm.status,
-      supervisor: editForm.supervisor,
-      hire_date: editForm.dateHired,
       emergency_contact: editForm.emergencyContact,
       gender: editForm.gender,
       civil_status: editForm.civilStatus,
       birthdate: editForm.birthdate || null,
       birthplace: editForm.birthplace,
-      employment_type: editForm.employmentType,
       education: editForm.education,
       experience: editForm.experience,
       tin: editForm.tin,
       sss: editForm.sss,
       philhealth: editForm.philhealth,
       pagibig: editForm.pagibig,
+      profile_details: { applicationForm: employeeProfileForm },
     };
-    if (nextOverride !== savedSalary) employeeUpdate.salary = nextOverride || null;
-    if (documentsChanged) {
-      employeeUpdate.documents = [...(editForm.employeeDocumentsOnly ?? [])];
-    }
-    const outletChanged = editForm.outlet !== employee?.outlet;
-    if (outletChanged) {
-      employeeUpdate.outlet = editForm.outlet === NO_OUTLET ? "" : editForm.outlet;
-    }
-
+    if (documentsChanged) employeeUpdate.documents = [...(editForm.employeeDocumentsOnly ?? [])];
     let data: any = null;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const result = await supabase
@@ -622,64 +614,6 @@ export default function EmployeeProfile() {
 
     if (!data) throw new Error("Employee profile could not be saved with the available employee columns.");
 
-    const appForm = editForm.applicationForm;
-    if (appForm?.applicantId && appForm !== employee?.applicationForm) {
-      const applicantName = `${appForm.firstName ?? ""} ${appForm.middleName ?? ""} ${appForm.lastName ?? ""} ${appForm.suffix ?? ""}`.replace(/\s+/g, " ").trim();
-      const coverLetterData = {
-        ...appForm,
-        hearAbout: appForm.hearAbout,
-        hearAboutOther: appForm.hearAboutOther,
-        age: appForm.age,
-        nationality: appForm.nationality,
-        currentAddress: appForm.currentAddress,
-        permanentAddress: appForm.permanentAddress,
-        educationBackground: appForm.educationBackground,
-        workExperiences: appForm.workExperiences ?? [],
-        workExperience: appForm.workExperiences?.[0] ?? null,
-        skills: appForm.skills ?? [],
-        otherSkills: appForm.otherSkills,
-        certifications: appForm.certifications ?? [],
-        characterReferences: appForm.characterReferences ?? [],
-        emergencyContacts: appForm.emergencyContacts ?? [],
-        emergencyContact: appForm.emergencyContacts?.[0] ?? null,
-        submittedDocuments: appForm.submittedDocuments ?? [],
-        otherDocument: appForm.otherDocument,
-      };
-
-      const { error: applicantUpdateError } = await supabase
-        .from("applicants")
-        .update({
-          name: applicantName || appForm.name || editForm.name,
-          first_name: appForm.firstName ?? "",
-          middle_name: appForm.middleName ?? "",
-          last_name: appForm.lastName ?? "",
-          suffix: appForm.suffix ?? "",
-          gender: appForm.gender ?? "",
-          civil_status: appForm.civilStatus ?? "",
-          birthdate: appForm.birthdate || null,
-          birthplace: appForm.birthplace ?? "",
-          height: appForm.height ?? "",
-          weight: appForm.weight ?? "",
-          email: appForm.email ?? editForm.email,
-          phone_number: appForm.phone ?? editForm.contact,
-          address: appForm.currentAddress ?? editForm.address,
-          position_applied: appForm.positionApplied ?? editForm.position,
-          education: appForm.educationBackground?.level ?? editForm.education,
-          experience: appForm.workExperiences?.[0]?.totalYearsExperience ?? editForm.experience,
-          tin: appForm.tin ?? "",
-          sss: appForm.sss ?? "",
-          philhealth: appForm.philhealth ?? "",
-          pagibig: appForm.pagibig ?? "",
-          emergency_contact: appForm.emergencyContacts?.[0]
-            ? `${appForm.emergencyContacts[0].name ?? ""} - ${appForm.emergencyContacts[0].relation ?? ""} - ${appForm.emergencyContacts[0].phone ?? ""}`
-            : editForm.emergencyContact,
-          cover_letter: JSON.stringify(coverLetterData),
-        })
-        .eq("applicant_id", appForm.applicantId);
-
-      if (applicantUpdateError) throw applicantUpdateError;
-    }
-
     const updatedEmployee = {
   ...editForm,
   id: data.employee_id,
@@ -689,7 +623,7 @@ export default function EmployeeProfile() {
   last_name: data.last_name ?? "",
   suffix: data.suffix ?? "",
   position: data.position ?? "",
-  outlet: outletChanged ? data.outlet ?? "" : editForm.outlet,
+  outlet: employee?.outlet ?? editForm.outlet,
   status: data.status ?? "Active",
   contact: data.phone_number ?? "",
   email: data.email ?? "",
@@ -975,9 +909,10 @@ export default function EmployeeProfile() {
     />
   );
 
-  const editAppChoice = (label: string, value: string | undefined, onChange: (value: string) => void, options: readonly string[]) => (
+  const editAppChoice = (label: string, value: string | undefined, onChange: (value: string) => void, options: readonly string[], disabled = false) => (
     editAppField(label, value, onChange, {
       select: true,
+      disabled,
       children: [
         <MenuItem key="empty" value="">{options.includes('') ? 'None' : `Select ${label.toLowerCase()}…`}</MenuItem>,
         ...[...new Set([...options, value ?? ''])].filter(Boolean).map(option => (
@@ -1492,11 +1427,11 @@ export default function EmployeeProfile() {
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, md: 6 }}>{editAppField('Employee ID', employee.id, () => undefined, { disabled: true })}</Grid>
                   <Grid size={{ xs: 12, md: 6 }}>{editAppField('Applicant ID', editApplication.applicantId || employee.applicantId, () => undefined, { disabled: true })}</Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Position applied for', editApplication.positionApplied || employee.position, (value) => updateApplicationForm({ positionApplied: value }))}</Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Application status', editApplication.status, (value) => updateApplicationForm({ status: value }))}</Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppChoice('How applicant heard about opening', editApplication.hearAbout, (value) => updateApplicationForm({ hearAbout: value }), HEAR_ABOUT_OPTIONS)}</Grid>
-                  {editApplication.hearAbout === 'Other' && <Grid size={{ xs: 12, md: 6 }}>{editAppField('Please specify', editApplication.hearAboutOther, (value) => updateApplicationForm({ hearAboutOther: value }))}</Grid>}
-                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Date hired', editForm.dateHired, (value) => setEditForm({ ...editForm, dateHired: value }), { type: 'date' })}</Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Position applied for', editApplication.positionApplied || employee.position, () => undefined, { disabled: true })}</Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Application status', editApplication.status, () => undefined, { disabled: true })}</Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppChoice('How applicant heard about opening', editApplication.hearAbout, () => undefined, HEAR_ABOUT_OPTIONS, true)}</Grid>
+                  {editApplication.hearAbout === 'Other' && <Grid size={{ xs: 12, md: 6 }}>{editAppField('Please specify', editApplication.hearAboutOther, () => undefined, { disabled: true })}</Grid>}
+                  <Grid size={{ xs: 12, md: 6 }}>{editAppField('Date hired', editForm.dateHired, () => undefined, { type: 'date', disabled: true })}</Grid>
                 </Grid>
               </Paper>
               <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 } }}>

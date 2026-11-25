@@ -1,7 +1,8 @@
-import { formatDisplayDate } from '../../lib/displayDate';
+import { formatDisplayDate, parseDisplayDate } from '../../lib/displayDate';
 import MobileNumberField from '../MobileNumberField';
 import { formatMobileNumber, isPhilippineMobileNumber } from '../../lib/mobileNumber';
 import { employeeApplicationFields } from '../../lib/employeeApplicationFields';
+import { employeeProfileFormFromSections, type EmployeeProfileFieldSections } from '../../lib/employeeProfileDetails';
 import { loadJobSalaryRates, parseSalaryRate } from '../../lib/jobSalaryRates';
 import { jobTitleKey } from '../../lib/jobTitles';
 import { useState, useEffect, useRef } from 'react';
@@ -231,6 +232,7 @@ export default function MyProfile() {
   const [positionSalary, setPositionSalary] = useState<{ key: string; rate: number | null } | null>(null);
   const [application, setApplication] = useState<Application | null>(null);
   const [applicationFields, setApplicationFields] = useState<ReturnType<typeof employeeApplicationFields>>([]);
+  const [applicationFieldDraft, setApplicationFieldDraft] = useState<EmployeeProfileFieldSections>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editTab, setEditTab] = useState<'account' | 'personal'>('personal');
@@ -325,7 +327,18 @@ export default function MyProfile() {
         }
 
         const coverLetter = safeJson(applicant?.cover_letter);
-        setApplicationFields(employeeRow ? employeeApplicationFields(employeeRow, applicant, coverLetter) : []);
+        const profileDetails = employeeRow?.profile_details && typeof employeeRow.profile_details === 'object'
+          ? employeeRow.profile_details : {};
+        const savedProfileForm = profileDetails.applicationForm && typeof profileDetails.applicationForm === 'object'
+          ? profileDetails.applicationForm : {};
+        const fields = employeeRow
+          ? employeeApplicationFields(employeeRow, applicant, { ...coverLetter, ...savedProfileForm })
+          : [];
+        setApplicationFields(fields);
+        setApplicationFieldDraft(Object.fromEntries(fields.map(({ title, fields: rows }) => [
+          title,
+          Object.fromEntries(rows.map(([label, value]) => [label, value === '—' ? '' : value])),
+        ])));
 
         if (employeeRow) {
           const row = employeeRow;
@@ -347,10 +360,10 @@ export default function MyProfile() {
               address: firstValue(row.address, applicant?.address, coverLetter?.currentAddress, coverLetter?.permanentAddress) ?? '',
               dateHired: row.hire_date ?? '',
               emergencyContact: firstValue(row.emergency_contact, applicant?.emergency_contact) ?? '',
-              tin: firstValue(row.tin, applicant?.tin) ?? '',
-              sss: firstValue(row.sss, applicant?.sss) ?? '',
-              philhealth: firstValue(row.philhealth, applicant?.philhealth) ?? '',
-              pagibig: firstValue(row.pagibig, applicant?.pagibig) ?? '',
+              tin: firstValue(savedProfileForm.tin, row.tin, applicant?.tin) ?? '',
+              sss: firstValue(savedProfileForm.sss, row.sss, applicant?.sss) ?? '',
+              philhealth: firstValue(savedProfileForm.philhealth, row.philhealth, applicant?.philhealth) ?? '',
+              pagibig: firstValue(savedProfileForm.pagibig, row.pagibig, applicant?.pagibig) ?? '',
             };
           }
         }
@@ -408,19 +421,74 @@ export default function MyProfile() {
     }
     setSaving(true);
     try {
+      const applicationForm = employeeProfileFormFromSections(applicationFieldDraft, {
+        phone: editForm.contact ?? '',
+        email: editForm.email ?? '',
+        currentAddress: editForm.address ?? '',
+        tin: applicationFieldDraft['Government and Bank Details']?.TIN ?? employee.tin ?? '',
+        sss: applicationFieldDraft['Government and Bank Details']?.SSS ?? employee.sss ?? '',
+        philhealth: applicationFieldDraft['Government and Bank Details']?.PhilHealth ?? employee.philhealth ?? '',
+        pagibig: applicationFieldDraft['Government and Bank Details']?.['Pag-IBIG'] ?? employee.pagibig ?? '',
+      });
+      if (!String(applicationForm.firstName ?? '').trim() || !String(applicationForm.lastName ?? '').trim()) {
+        setSnackbar({ open: true, message: 'First name and last name are required.', severity: 'error' });
+        setSaving(false);
+        return;
+      }
+      for (const key of ['birthdate', 'declarationDate'] as const) {
+        const parsed = parseDisplayDate(String(applicationForm[key] ?? ''));
+        if (applicationForm[key] && !parsed) {
+          setSnackbar({ open: true, message: `Enter a valid date for ${key === 'birthdate' ? 'Date of Birth' : 'Declaration Date'}.`, severity: 'error' });
+          setSaving(false);
+          return;
+        }
+        if (parsed) applicationForm[key] = parsed;
+      }
+      applicationForm.workExperiences = (applicationForm.workExperiences ?? []).map((work: any) => ({
+        ...work,
+        employmentStartDate: parseDisplayDate(String(work.employmentStartDate ?? '')) || work.employmentStartDate,
+        employmentEndDate: parseDisplayDate(String(work.employmentEndDate ?? '')) || work.employmentEndDate,
+      }));
       const { error } = await supabase
         .from('employees')
         .update({
+          first_name: applicationForm.firstName || null,
+          middle_name: applicationForm.middleName || null,
+          last_name: applicationForm.lastName || null,
+          suffix: applicationForm.suffix || null,
           phone_number: editForm.contact ?? null,
           email: editForm.email ?? null,
           address: editForm.address ?? null,
           emergency_contact: editForm.emergencyContact ?? null,
+          gender: applicationForm.gender || null,
+          civil_status: applicationForm.civilStatus || null,
+          birthdate: applicationForm.birthdate || null,
+          birthplace: applicationForm.birthplace || null,
+          education: applicationForm.educationBackground?.level || null,
+          experience: applicationForm.workExperiences?.[0]?.totalYearsExperience || null,
+          tin: applicationForm.tin || null,
+          sss: applicationForm.sss || null,
+          philhealth: applicationForm.philhealth || null,
+          pagibig: applicationForm.pagibig || null,
+          profile_details: { applicationForm },
         })
         .eq('employee_id', user.employeeId);
 
       if (error) throw error;
 
-      setEmployee(current => current && ({ ...current, ...editForm }));
+      setApplicationFields(current => current.map(section => ({
+        ...section,
+        fields: section.fields.map(([label]) => [label, applicationFieldDraft[section.title]?.[label] ?? ''] as [string, string]),
+      })));
+      setEmployee(current => current && ({
+        ...current,
+        ...editForm,
+        name: [applicationForm.firstName, applicationForm.middleName, applicationForm.lastName, applicationForm.suffix].filter(Boolean).join(' '),
+        tin: applicationForm.tin,
+        sss: applicationForm.sss,
+        philhealth: applicationForm.philhealth,
+        pagibig: applicationForm.pagibig,
+      }));
       setEditing(false);
       setSnackbar({ open: true, message: '✅ Profile updated successfully!', severity: 'success' });
     } catch (e: any) {
@@ -656,7 +724,15 @@ export default function MyProfile() {
               <Button
                 variant="contained"
                 startIcon={<EditNote />}
-                onClick={() => { setEditing(true); setEditForm(employee); setEditTab('personal'); }}
+                onClick={() => {
+                  setEditing(true);
+                  setEditForm(employee);
+                  setApplicationFieldDraft(Object.fromEntries(applicationFields.map(({ title, fields }) => [
+                    title,
+                    Object.fromEntries(fields.map(([label, value]) => [label, value === '—' ? '' : value])),
+                  ])));
+                  setEditTab('personal');
+                }}
                 sx={{
                   ...pillButtonSx,
                   py: 1.1,
@@ -746,9 +822,6 @@ export default function MyProfile() {
               <Box id={editing ? 'employee-edit-personal' : undefined} role={editing ? 'tabpanel' : undefined}
                 aria-labelledby={editing ? 'employee-edit-personal-tab' : undefined}>
                 <Paper elevation={0} sx={{ ...innerCardSx, p: { xs: 1.5, sm: 2 }, mb: 2.25 }}>
-                  <Typography variant="caption" sx={{ display: 'block', mb: 1.5, color: GREEN_UI.greenDark, fontWeight: 700, letterSpacing: '0.08em' }}>
-                    EMPLOYMENT DETAILS · HR MANAGED
-                  </Typography>
                   <Grid container spacing={1.5}>
                     {READONLY_FIELDS.map(({ key, label, icon }) => (
                       <Grid key={key} size={{ xs: 12, sm: 6 }}>
@@ -801,17 +874,24 @@ export default function MyProfile() {
                   </Typography>
                   <Grid container spacing={1.5}>
                     {[
-                      ['TIN', employee.tin || application?.tin || '000-000-000-000'],
-                      ['SSS', employee.sss || application?.sss || '00-0000000-0'],
-                      ['PhilHealth', employee.philhealth || application?.philhealth || '00-000000000-0'],
-                      ['Pag-IBIG', employee.pagibig || application?.pagibig || '0000-0000-0000'],
+                      ['TIN', employee.tin || application?.tin || ''],
+                      ['SSS', employee.sss || application?.sss || ''],
+                      ['PhilHealth', employee.philhealth || application?.philhealth || ''],
+                      ['Pag-IBIG', employee.pagibig || application?.pagibig || ''],
                     ].map(([label, value]) => (
                       <Grid key={label} size={{ xs: 12, sm: 6 }}>
                         <TextField
                           fullWidth
                           label={label}
-                          value={value}
-                          disabled
+                          value={editing ? applicationFieldDraft['Government and Bank Details']?.[label] ?? value : value || '—'}
+                          onChange={editing ? event => setApplicationFieldDraft(current => ({
+                            ...current,
+                            'Government and Bank Details': {
+                              ...current['Government and Bank Details'],
+                              [label]: event.target.value,
+                            },
+                          })) : undefined}
+                          disabled={!editing}
                           size="small"
                           sx={softTextFieldSx}
                           InputProps={{ startAdornment: <Box sx={{ mr: 1, color: GREEN_UI.greenDark, display: 'flex' }}><Badge fontSize="small" /></Box> }}
@@ -832,11 +912,25 @@ export default function MyProfile() {
                         const multiline = value.length > 40 || value.includes('\n');
                         return (
                           <Grid key={label} size={{ xs: 12, sm: 6 }}>
-                            <TextField fullWidth size="small" label={label} value={value || '—'}
+                            <TextField fullWidth size="small" label={label}
+                              type={['Date of Birth', 'Employment Start Date', 'Employment End Date', 'Declaration Date'].includes(label) ? 'date' : 'text'}
+                              value={editing
+                                ? (['Date of Birth', 'Employment Start Date', 'Employment End Date', 'Declaration Date'].includes(label)
+                                  ? parseDisplayDate(applicationFieldDraft[title]?.[label] ?? '')
+                                  : applicationFieldDraft[title]?.[label] ?? '')
+                                : value || '—'}
+                              onChange={editing ? event => {
+                                const nextValue = event.target.type === 'date' ? formatDisplayDate(event.target.value) : event.target.value;
+                                setApplicationFieldDraft(current => ({
+                                  ...current,
+                                  [title]: { ...current[title], [label]: nextValue },
+                                }));
+                              } : undefined}
+                              disabled={!editing}
                               multiline={multiline}
                               slotProps={{
                                 input: {
-                                  readOnly: true,
+                                  readOnly: !editing,
                                   startAdornment: <Box aria-hidden="true" sx={{ mr: 1, color: GREEN_UI.greenDark, display: 'flex', alignSelf: multiline ? 'flex-start' : 'center' }}>
                                     <Icon fontSize="small" />
                                   </Box>,

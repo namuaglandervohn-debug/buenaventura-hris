@@ -35,8 +35,8 @@ export function employeeApplicationFields(employee: RecordValues, applicant: Rec
   const details = record(savedDetails);
   const education = record(details.educationBackground);
   const date = (value: unknown) => formatDisplayDate(text(value));
-  const birthplace = text(employee.birthplace, application.birthplace, details.birthplace);
-  const birthdate = text(employee.birthdate, application.birthdate, details.birthdate);
+  const birthplace = text(details.birthplace, employee.birthplace, application.birthplace);
+  const birthdate = text(details.birthdate, employee.birthdate, application.birthdate);
   const address = (title: string, value: unknown, full?: string, birthplaceOnly = false): ProfileFields => {
     const parts = record(value);
     const fields: ProfileFields['fields'] = (birthplaceOnly ? addressLabels.slice(0, 4) : addressLabels)
@@ -47,20 +47,20 @@ export function employeeApplicationFields(employee: RecordValues, applicant: Rec
 
   return [
     { title: 'Personal Details', fields: [
-      ['First Name', text(employee.first_name, application.first_name, details.firstName)],
-      ['Middle Name', text(employee.middle_name, application.middle_name, details.middleName)],
-      ['Last Name', text(employee.last_name, application.last_name, details.lastName)],
-      ['Suffix', text(employee.suffix, application.suffix, details.suffix)],
-      ['Date of Birth', date(birthdate)],
+      ['First Name', text(details.firstName, employee.first_name, application.first_name)],
+      ['Middle Name', text(details.middleName, employee.middle_name, application.middle_name)],
+      ['Last Name', text(details.lastName, employee.last_name, application.last_name)],
+      ['Suffix', text(details.suffix, employee.suffix, application.suffix)],
+      ['Date of Birth', date(text(details.birthdate, birthdate))],
       ['Age', text(details.age)],
-      ['Gender', text(employee.gender, application.gender, details.gender)],
-      ['Civil Status', text(employee.civil_status, application.civil_status, details.civilStatus)],
-      ['Nationality', text(employee.nationality, details.nationality)],
-      ['Height (cm)', text(employee.height, application.height, details.height)],
-      ['Weight (kg)', text(employee.weight, application.weight, details.weight)],
+      ['Gender', text(details.gender, employee.gender, application.gender)],
+      ['Civil Status', text(details.civilStatus, employee.civil_status, application.civil_status)],
+      ['Nationality', text(details.nationality, employee.nationality)],
+      ['Height (cm)', text(details.height, employee.height, application.height)],
+      ['Weight (kg)', text(details.weight, employee.weight, application.weight)],
     ] },
     address('Birthplace', details.birthplaceParts, birthplace, true),
-    address('Current Address', details.currentAddressParts),
+    address('Current Address', details.currentAddressParts, text(details.currentAddress)),
     address('Permanent Address', details.permanentAddressParts, text(details.permanentAddress)),
     { title: 'Highest Educational Background', fields: [
       ['Highest Educational Level', text(education.level, employee.education, application.education)],
