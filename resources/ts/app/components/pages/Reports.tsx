@@ -170,8 +170,33 @@ const REPORT_OUTLET_LOGOS = new Map([
 const PRINT_HEADER_STYLES = `
   .print-header { display: flex; align-items: center; gap: 16px; background: #1f7a46; color: white; padding: 18px 22px; border-radius: 8px 8px 0 0; print-color-adjust: exact; }
   .print-header p { color: white; margin: 0; font-size: 10px; }
-  .print-header-logo { flex: none; object-fit: contain; border-radius: 6px; }
+  .print-header-logo { flex: none; object-fit: cover; border-radius: 50%; }
 `;
+
+async function makeCircularLogo(blob: Blob) {
+  const imageUrl = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = imageUrl;
+    await image.decode();
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not prepare the report logo.');
+    const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    context.beginPath();
+    context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    context.clip();
+    context.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+    return canvas.toDataURL('image/png');
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
 
 async function printReport(html: string, windowFeatures: string) {
   const printWindow = window.open('', '_blank', windowFeatures);
@@ -986,7 +1011,7 @@ export default function Reports() {
       const fontDataUrl = await fileToDataUrl(await fontResponse.blob());
       document.addFileToVFS(fontFile, fontDataUrl.slice(fontDataUrl.indexOf(',') + 1));
       document.addFont(fontFile, fontName, 'normal');
-      const logoImage = logoResponse ? new Uint8Array(await logoResponse.arrayBuffer()) : null;
+      const logoImage = logoResponse ? await makeCircularLogo(await logoResponse.blob()) : null;
       const pageWidth = document.internal.pageSize.getWidth();
       const pageHeight = document.internal.pageSize.getHeight();
       const margin = 48;
@@ -999,7 +1024,7 @@ export default function Reports() {
       const header = () => {
         document.setFillColor(31, 122, 70);
         document.rect(0, 0, pageWidth, 86, 'F');
-        if (logoImage) document.addImage(logoImage, 'JPEG', margin, 16, logoSize, logoSize, 'outlet-logo');
+        if (logoImage) document.addImage(logoImage, 'PNG', margin, 16, logoSize, logoSize, 'outlet-logo');
         document.setTextColor(255, 255, 255);
         document.setFont('helvetica', 'bold');
         document.setFontSize(16);
