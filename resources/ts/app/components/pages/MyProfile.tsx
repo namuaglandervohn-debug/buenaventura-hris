@@ -3,6 +3,7 @@ import MobileNumberField from '../MobileNumberField';
 import { formatMobileNumber, isPhilippineMobileNumber } from '../../lib/mobileNumber';
 import { employeeApplicationFields } from '../../lib/employeeApplicationFields';
 import { employeeProfileFormFromSections, type EmployeeProfileFieldSections } from '../../lib/employeeProfileDetails';
+import { formatGovernmentId, governmentIdMaxLength } from '../../lib/governmentIdFormat';
 import { loadJobSalaryRates, parseSalaryRate } from '../../lib/jobSalaryRates';
 import { jobTitleKey } from '../../lib/jobTitles';
 import { useState, useEffect, useRef } from 'react';
@@ -430,6 +431,10 @@ export default function MyProfile() {
         philhealth: applicationFieldDraft['Government and Bank Details']?.PhilHealth ?? employee.philhealth ?? '',
         pagibig: applicationFieldDraft['Government and Bank Details']?.['Pag-IBIG'] ?? employee.pagibig ?? '',
       });
+      applicationForm.tin = formatGovernmentId('TIN', applicationForm.tin);
+      applicationForm.sss = formatGovernmentId('SSS', applicationForm.sss);
+      applicationForm.philhealth = formatGovernmentId('PhilHealth', applicationForm.philhealth);
+      applicationForm.pagibig = formatGovernmentId('Pag-IBIG', applicationForm.pagibig);
       if (!String(applicationForm.firstName ?? '').trim() || !String(applicationForm.lastName ?? '').trim()) {
         setSnackbar({ open: true, message: 'First name and last name are required.', severity: 'error' });
         setSaving(false);
@@ -874,26 +879,27 @@ export default function MyProfile() {
                   </Typography>
                   <Grid container spacing={1.5}>
                     {[
-                      ['TIN', employee.tin || application?.tin || ''],
-                      ['SSS', employee.sss || application?.sss || ''],
-                      ['PhilHealth', employee.philhealth || application?.philhealth || ''],
-                      ['Pag-IBIG', employee.pagibig || application?.pagibig || ''],
+                      ['TIN', formatGovernmentId('TIN', employee.tin || application?.tin)],
+                      ['SSS', formatGovernmentId('SSS', employee.sss || application?.sss)],
+                      ['PhilHealth', formatGovernmentId('PhilHealth', employee.philhealth || application?.philhealth)],
+                      ['Pag-IBIG', formatGovernmentId('Pag-IBIG', employee.pagibig || application?.pagibig)],
                     ].map(([label, value]) => (
                       <Grid key={label} size={{ xs: 12, sm: 6 }}>
                         <TextField
                           fullWidth
                           label={label}
-                          value={editing ? applicationFieldDraft['Government and Bank Details']?.[label] ?? value : value || '—'}
+                          value={editing ? formatGovernmentId(label, applicationFieldDraft['Government and Bank Details']?.[label] ?? value) : value || '—'}
                           onChange={editing ? event => setApplicationFieldDraft(current => ({
                             ...current,
                             'Government and Bank Details': {
                               ...current['Government and Bank Details'],
-                              [label]: event.target.value,
+                              [label]: formatGovernmentId(label, event.target.value),
                             },
                           })) : undefined}
                           disabled={!editing}
                           size="small"
                           sx={softTextFieldSx}
+                          inputProps={editing ? { inputMode: 'numeric', maxLength: governmentIdMaxLength(label) } : undefined}
                           InputProps={{ startAdornment: <Box sx={{ mr: 1, color: GREEN_UI.greenDark, display: 'flex' }}><Badge fontSize="small" /></Box> }}
                         />
                       </Grid>

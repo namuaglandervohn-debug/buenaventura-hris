@@ -45,6 +45,7 @@ import { loadJobSalaryRates, parseSalaryRate } from '../../lib/jobSalaryRates';
 import { includeSelectedJobTitle, jobTitleKey } from '../../lib/jobTitles';
 import { useJobTitleOptions } from '../../lib/useJobTitleOptions';
 import { formatSalaryInput, readDailyRateEdit } from '../../lib/salaryInput';
+import { formatGovernmentId, governmentIdMaxLength } from '../../lib/governmentIdFormat';
 import { saveEmployeeProfilePhoto } from '../../lib/profilePhoto';
 import ProfilePhotoUpload from '../ProfilePhotoUpload';
 import ProfilePhotoAvatar from '../ProfilePhotoAvatar';
@@ -564,6 +565,10 @@ export default function EmployeeProfile() {
     const documentsChanged = editForm.employeeDocumentsOnly !== employee?.employeeDocumentsOnly;
     const applicationForm = editForm.applicationForm ?? {};
     const employeeProfileForm = { ...applicationForm };
+    employeeProfileForm.tin = formatGovernmentId('TIN', employeeProfileForm.tin ?? editForm.tin);
+    employeeProfileForm.sss = formatGovernmentId('SSS', employeeProfileForm.sss ?? editForm.sss);
+    employeeProfileForm.philhealth = formatGovernmentId('PhilHealth', employeeProfileForm.philhealth ?? editForm.philhealth);
+    employeeProfileForm.pagibig = formatGovernmentId('Pag-IBIG', employeeProfileForm.pagibig ?? editForm.pagibig);
     delete employeeProfileForm.applicantId;
     delete employeeProfileForm.status;
     delete employeeProfileForm.positionApplied;
@@ -585,10 +590,10 @@ export default function EmployeeProfile() {
       birthplace: editForm.birthplace,
       education: editForm.education,
       experience: editForm.experience,
-      tin: editForm.tin,
-      sss: editForm.sss,
-      philhealth: editForm.philhealth,
-      pagibig: editForm.pagibig,
+      tin: employeeProfileForm.tin,
+      sss: employeeProfileForm.sss,
+      philhealth: employeeProfileForm.philhealth,
+      pagibig: employeeProfileForm.pagibig,
       profile_details: { applicationForm: employeeProfileForm },
     };
     if (documentsChanged) employeeUpdate.documents = [...(editForm.employeeDocumentsOnly ?? [])];
@@ -897,17 +902,21 @@ export default function EmployeeProfile() {
     updateApplicationForm({ emergencyContacts });
   };
 
-  const editAppField = (label: string, value: string | undefined, onChange: (value: string) => void, props: TextFieldProps = {}) => (
-    <TextField
-      fullWidth
-      label={label}
-      value={value ?? ''}
-      onChange={(event) => onChange(event.target.value)}
-      InputLabelProps={{ shrink: true }}
-      sx={applicationTextFieldSx}
-      {...props}
-    />
-  );
+  const editAppField = (label: string, value: string | undefined, onChange: (value: string) => void, props: TextFieldProps = {}) => {
+    const idMaxLength = governmentIdMaxLength(label);
+    return (
+      <TextField
+        fullWidth
+        label={label}
+        value={idMaxLength ? formatGovernmentId(label, value) : value ?? ''}
+        onChange={event => onChange(idMaxLength ? formatGovernmentId(label, event.target.value) : event.target.value)}
+        InputLabelProps={{ shrink: true }}
+        sx={applicationTextFieldSx}
+        {...props}
+        inputProps={idMaxLength ? { ...props.inputProps, inputMode: 'numeric', maxLength: idMaxLength } : props.inputProps}
+      />
+    );
+  };
 
   const editAppChoice = (label: string, value: string | undefined, onChange: (value: string) => void, options: readonly string[], disabled = false) => (
     editAppField(label, value, onChange, {
@@ -1169,10 +1178,10 @@ export default function EmployeeProfile() {
               <>
             {profileSection('Government IDs, References, And Emergency Contact', (
               <>
-                {detailItem('TIN', application.tin || employee.tin)}
-                {detailItem('SSS', application.sss || employee.sss)}
-                {detailItem('PhilHealth', application.philhealth || employee.philhealth)}
-                {detailItem('Pag-IBIG', application.pagibig || employee.pagibig)}
+                {detailItem('TIN', formatGovernmentId('TIN', application.tin || employee.tin))}
+                {detailItem('SSS', formatGovernmentId('SSS', application.sss || employee.sss))}
+                {detailItem('PhilHealth', formatGovernmentId('PhilHealth', application.philhealth || employee.philhealth))}
+                {detailItem('Pag-IBIG', formatGovernmentId('Pag-IBIG', application.pagibig || employee.pagibig))}
 
                 <Grid size={12}>
                   <Divider sx={{ my: 0.5, borderColor: GREEN_UI.border }} />
